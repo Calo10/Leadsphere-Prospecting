@@ -1,0 +1,29 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "ServiceBusConnection": "<azure-service-bus-connection-string>",
+    "DiscoveryJobsQueueName": "leadsphere-discovery-jobs",
+    "ConnectionStrings__LeadSphereDb": "<sql-server-connection-string>",
+    "Discovery__MaxCompaniesPerSearch": "25",
+    "Discovery__MaxSearchQueries": "6",
+    "Discovery__MaxResultsPerSearchQuery": "20",
+    "Discovery__MaxContactsPerCompany": "10",
+    "Discovery__MaxLinkedInPeopleQueriesPerCompany": "6",
+    "Discovery__EnableContactWebEnrichment": "true",
+    "Discovery__PreferContactsWithEmailOrPhone": "true",
+    "WebSearch__Provider": "SerpApi",
+    "WebSearch__SerpApi__ApiKey": "<serpapi-key>",
+    "WebSearch__Google__ApiKey": "<google-api-key>",
+    "WebSearch__Google__SearchEngineId": "<google-cx>",
+    "WebSearch__Bing__ApiKey": "<bing-api-key>",
+    "OpenAI__Provider": "Azure",
+    "OpenAI__ApiKey": "<azure-openai-api-key>",
+    "OpenAI__Endpoint": "https://nexa-open-ai.openai.azure.com",
+    "OpenAI__Deployment": "whatsapp-bot",
+    "OpenAI__ApiVersion": "2025-01-01-preview",
+    "OpenAI__Model": "gpt-4o-mini",
+    "OpenAI__BaseUrl": "https://api.openai.com/v1/"
+  }
+}
