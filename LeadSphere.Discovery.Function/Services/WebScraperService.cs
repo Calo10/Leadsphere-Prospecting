@@ -58,6 +58,7 @@ public sealed class WebScraperService : IWebScraperService
         var emails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var phones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var socialLinks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var websiteLinkedInContacts = new List<AiContactData>();
         var logoCandidates = new List<string>();
         string? homepageHtml = null;
 
@@ -78,6 +79,8 @@ public sealed class WebScraperService : IWebScraperService
                 if (!socialLinks.ContainsKey(key))
                     socialLinks[key] = url;
             }
+
+            websiteLinkedInContacts.AddRange(SocialLinkExtractor.ExtractPersonalLinkedInContacts(html));
 
             if (path == string.Empty)
                 logoCandidates.AddRange(SocialLinkExtractor.ExtractLogoCandidates(html, baseUri));
@@ -109,6 +112,10 @@ public sealed class WebScraperService : IWebScraperService
         candidate.JobTitles = ExtractJobTitles(candidate.RawText);
         candidate.HomepageHtml = homepageHtml;
         candidate.SocialLinks = socialLinks;
+        candidate.WebsiteLinkedInContacts = websiteLinkedInContacts
+            .GroupBy(c => c.LinkedInUrl, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
         candidate.LogoCandidateUrls = logoCandidates.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
         return candidate;

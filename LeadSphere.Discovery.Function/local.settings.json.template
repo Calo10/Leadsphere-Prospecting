@@ -12,6 +12,8 @@
     "Discovery__MaxContactsPerCompany": "10",
     "Discovery__MaxLinkedInPeopleQueriesPerCompany": "6",
     "Discovery__EnableContactWebEnrichment": "true",
+    "Discovery__EnableCompanyMarketData": "true",
+    "Discovery__MaxCompanyNewsItems": "5",
     "Discovery__PreferContactsWithEmailOrPhone": "true",
     "WebSearch__Provider": "SerpApi",
     "WebSearch__SerpApi__ApiKey": "<serpapi-key>",

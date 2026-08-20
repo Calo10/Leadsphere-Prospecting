@@ -72,7 +72,10 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
             - Prefer contacts with email and/or phone. Assign emails/phones from the scraped lists when the name clearly matches.
             - If a personal email like first.last@domain appears near a person name, attach it to that contact.
             - If a phone appears on contact/about pages, attach it to the most relevant decision-maker when reasonable.
-            - linkedInUrl must be a personal profile (linkedin.com/in/username), NEVER a company page (linkedin.com/company/...).
+            - linkedInUrl MUST be that person's own profile (linkedin.com/in/username).
+            - NEVER copy the company LinkedIn page (linkedin.com/company/...) onto a contact.
+            - NEVER reuse the same LinkedIn URL for multiple contacts unless you are certain it is the same person.
+            - If you only know the company LinkedIn page, omit linkedInUrl for the contact.
             - Extract every named decision-maker visible on team, leadership, about, or management pages (up to 10).
             - If no real decision-makers are found, return an empty contacts array.
             - Omit fields you do not know instead of returning null or empty strings.
@@ -100,15 +103,20 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
         userPrompt.AppendLine($"Job title hints: {string.Join(", ", candidate.JobTitles)}");
         if (candidate.LinkedInContacts.Count > 0)
         {
-            userPrompt.AppendLine("LinkedIn decision-makers discovered:");
+            userPrompt.AppendLine("Personal LinkedIn profiles of people at this company (use these for contacts, never the company page):");
             foreach (var person in candidate.LinkedInContacts)
                 userPrompt.AppendLine($"- {person.FullName} | {person.JobTitle} | {person.LinkedInUrl}");
         }
         if (candidate.SocialLinks.Count > 0)
         {
-            userPrompt.AppendLine("Social / external profiles:");
+            userPrompt.AppendLine("Company social profiles (company pages only — do NOT copy these onto contacts):");
             foreach (var (platform, url) in candidate.SocialLinks)
-                userPrompt.AppendLine($"- {platform}: {url}");
+            {
+                var label = string.Equals(platform, "linkedin", StringComparison.OrdinalIgnoreCase)
+                    ? "linkedin company page"
+                    : platform;
+                userPrompt.AppendLine($"- {label}: {url}");
+            }
         }
         if (candidate.Emails.Count > 0)
             userPrompt.AppendLine($"Personal emails (non-generic only): {string.Join(", ", candidate.Emails)}");
@@ -176,8 +184,9 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
                 result.Company.Name = candidate.Name;
         }
 
+        var companyLinkedIn = candidate.SocialLinks.GetValueOrDefault("linkedin");
         foreach (var contact in result.Contacts)
-            contact.LinkedInUrl = LinkedInContactUrl.NormalizePersonal(contact.LinkedInUrl);
+            contact.LinkedInUrl = LinkedInContactUrl.NormalizePersonal(contact.LinkedInUrl, companyLinkedIn);
 
         return result;
     }

@@ -60,6 +60,21 @@ internal static class MetadataBuilder
         if (enrichment.EmailValidations.Count > 0)
             payload["emailValidations"] = enrichment.EmailValidations;
 
+        if (!string.IsNullOrWhiteSpace(enrichment.Ticker))
+        {
+            payload["stock"] = new
+            {
+                ticker = enrichment.Ticker,
+                price = enrichment.StockPrice,
+                changePercent = enrichment.StockChangePercent,
+                currency = enrichment.StockCurrency,
+                asOf = enrichment.StockAsOf
+            };
+        }
+
+        if (enrichment.News.Count > 0)
+            payload["news"] = enrichment.News;
+
         return payload.Count == 0 ? null : ValueNormalizer.SerializeMetadata(payload);
     }
 

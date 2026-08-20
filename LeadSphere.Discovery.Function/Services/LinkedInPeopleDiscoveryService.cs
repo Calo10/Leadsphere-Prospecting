@@ -70,35 +70,35 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
             cancellationToken.ThrowIfCancellationRequested();
 
             var query = $"site:linkedin.com/in \"{cleanName}\" ({roleQuery})";
-            await CollectFromQueryAsync(query, cleanName, contacts, seenUrls, maxResults: 8, cancellationToken);
+            await CollectFromQueryAsync(query, linkedInCompanyUrl, contacts, seenUrls, maxResults: 8, cancellationToken);
         }
 
-        var companySlug = ExtractLinkedInCompanySlug(linkedInCompanyUrl);
+        var companySlug = LinkedInContactUrl.ExtractCompanySlug(linkedInCompanyUrl);
         if (!string.IsNullOrWhiteSpace(companySlug))
         {
             var companyQuery = $"site:linkedin.com/in {companySlug} (CEO OR Founder OR Director OR VP OR \"Head of\")";
-            await CollectFromQueryAsync(companyQuery, cleanName, contacts, seenUrls, maxResults: 8, cancellationToken);
+            await CollectFromQueryAsync(companyQuery, linkedInCompanyUrl, contacts, seenUrls, maxResults: 8, cancellationToken);
         }
 
         if (contacts.Count < targetCount && !string.IsNullOrWhiteSpace(domain))
         {
             var domainQuery = $"site:linkedin.com/in \"{domain}\" (CEO OR Founder OR Director OR VP OR \"Head of Sales\" OR CMO)";
-            await CollectFromQueryAsync(domainQuery, cleanName, contacts, seenUrls, maxResults: 8, cancellationToken);
+            await CollectFromQueryAsync(domainQuery, linkedInCompanyUrl, contacts, seenUrls, maxResults: 8, cancellationToken);
         }
 
         if (contacts.Count < targetCount)
         {
             var broadQuery = $"site:linkedin.com/in \"{cleanName}\" (executive OR leadership OR \"general manager\" OR partner)";
-            await CollectFromQueryAsync(broadQuery, cleanName, contacts, seenUrls, maxResults: 6, cancellationToken);
+            await CollectFromQueryAsync(broadQuery, linkedInCompanyUrl, contacts, seenUrls, maxResults: 6, cancellationToken);
         }
 
         _logger.LogInformation("Discovered {Count} LinkedIn decision-makers for {Company}", contacts.Count, cleanName);
-        return ContactQualityFilter.MergeAndRank(contacts, []).Take(targetCount).ToList();
+        return ContactQualityFilter.MergeAndRank(contacts, [], linkedInCompanyUrl).Take(targetCount).ToList();
     }
 
     private async Task CollectFromQueryAsync(
         string query,
-        string companyName,
+        string? linkedInCompanyUrl,
         List<AiContactData> contacts,
         HashSet<string> seenUrls,
         int maxResults,
@@ -107,7 +107,7 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
         try
         {
             var results = await _webSearch.SearchAsync(query, maxResults, context: null, cancellationToken);
-            foreach (var contact in ParseResults(results, companyName))
+            foreach (var contact in ParseResults(results, linkedInCompanyUrl))
             {
                 if (string.IsNullOrWhiteSpace(contact.LinkedInUrl) || !seenUrls.Add(contact.LinkedInUrl))
                     continue;
@@ -121,7 +121,7 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
         }
     }
 
-    private static IEnumerable<AiContactData> ParseResults(IReadOnlyList<WebSearchResult> results, string companyName)
+    private static IEnumerable<AiContactData> ParseResults(IReadOnlyList<WebSearchResult> results, string? linkedInCompanyUrl)
     {
         foreach (var result in results)
         {
@@ -129,7 +129,7 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
             if (!profileMatch.Success)
                 continue;
 
-            var profileUrl = LinkedInContactUrl.NormalizePersonal(profileMatch.Value);
+            var profileUrl = LinkedInContactUrl.NormalizePersonal(profileMatch.Value, linkedInCompanyUrl);
             if (profileUrl is null)
                 continue;
             var title = result.Title.Trim();
@@ -180,19 +180,6 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
 
     private static bool IsValidParsedName(string name) =>
         !name.Contains("LinkedIn", StringComparison.OrdinalIgnoreCase) && name.Length >= 3;
-
-    private static string? ExtractLinkedInCompanySlug(string? linkedInCompanyUrl)
-    {
-        if (string.IsNullOrWhiteSpace(linkedInCompanyUrl))
-            return null;
-
-        var match = Regex.Match(
-            linkedInCompanyUrl,
-            @"linkedin\.com/company/([\w%-]+)",
-            RegexOptions.IgnoreCase);
-
-        return match.Success ? match.Groups[1].Value : null;
-    }
 
     private static string CleanCompanyName(string name)
     {

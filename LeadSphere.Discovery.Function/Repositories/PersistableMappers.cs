@@ -5,7 +5,7 @@ namespace LeadSphere.Discovery.Function.Repositories;
 
 internal static class PersistableContactMapper
 {
-    public static PersistableContact? Map(AiContactData contact, string? locationHint)
+    public static PersistableContact? Map(AiContactData contact, string? locationHint, string? companyLinkedInUrl = null)
     {
         var firstName = ValueNormalizer.Text(contact.FirstName);
         var lastName = ValueNormalizer.Text(contact.LastName);
@@ -23,7 +23,7 @@ internal static class PersistableContactMapper
         var email = ValueNormalizer.Text(contact.Email)?.ToLowerInvariant();
         var phone = PhoneNormalizer.Normalize(contact.Phone, locationHint);
         var jobTitle = ValueNormalizer.Text(contact.JobTitle);
-        var linkedInUrl = LinkedInContactUrl.NormalizePersonal(contact.LinkedInUrl);
+        var linkedInUrl = LinkedInContactUrl.NormalizePersonal(contact.LinkedInUrl, companyLinkedInUrl);
 
         if (firstName is null && lastName is null)
             return null;
@@ -64,6 +64,11 @@ internal static class PersistableCompanyMapper
             FacebookUrl: ValueNormalizer.Url(enrichment.FacebookUrl),
             InstagramUrl: ValueNormalizer.Url(enrichment.InstagramUrl),
             CrunchbaseUrl: ValueNormalizer.Url(enrichment.CrunchbaseUrl),
+            Ticker: ValueNormalizer.Text(enrichment.Ticker)?.ToUpperInvariant(),
+            StockPrice: enrichment.StockPrice,
+            StockChangePercent: enrichment.StockChangePercent,
+            StockCurrency: ValueNormalizer.Text(enrichment.StockCurrency)?.ToUpperInvariant(),
+            StockAsOf: enrichment.StockAsOf,
             MetadataJson: MetadataBuilder.ForCompany(extraction, enrichment));
     }
 }
@@ -82,4 +87,9 @@ internal sealed record PersistableCompany(
     string? FacebookUrl,
     string? InstagramUrl,
     string? CrunchbaseUrl,
+    string? Ticker,
+    decimal? StockPrice,
+    decimal? StockChangePercent,
+    string? StockCurrency,
+    DateTimeOffset? StockAsOf,
     string? MetadataJson);

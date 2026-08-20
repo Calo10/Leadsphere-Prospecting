@@ -200,12 +200,12 @@ public static class WebSearchQueryBuilder
 
 public static class DomainNormalizer
 {
-    private static readonly HashSet<string> IgnoredHosts = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> DirectoryHosts = new(StringComparer.OrdinalIgnoreCase)
     {
-        "linkedin.com", "www.linkedin.com", "facebook.com", "www.facebook.com",
-        "twitter.com", "x.com", "instagram.com", "youtube.com", "wikipedia.org",
-        "crunchbase.com", "glassdoor.com", "indeed.com", "yelp.com",
-        "yellowpages.com", "bbb.org", "mapquest.com", "tripadvisor.com"
+        "linkedin.com", "facebook.com", "twitter.com", "x.com", "instagram.com",
+        "youtube.com", "wikipedia.org", "crunchbase.com", "glassdoor.com",
+        "indeed.com", "yelp.com", "yellowpages.com", "bbb.org", "mapquest.com",
+        "tripadvisor.com"
     };
 
     private static readonly string[] BlockedHostSuffixes = [".gov", ".mil", ".edu"];
@@ -218,19 +218,31 @@ public static class DomainNormalizer
         return IsBlockedHost(uri.Host);
     }
 
+    public static bool IsDirectoryOrSocialUrl(string? url) =>
+        !string.IsNullOrWhiteSpace(url)
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && IsDirectoryOrSocialHost(uri.Host);
+
     public static bool IsBlockedHost(string host)
     {
-        host = host.ToLowerInvariant();
-        if (host.StartsWith("www."))
-            host = host[4..];
-
-        if (IgnoredHosts.Contains(host))
-            return true;
+        host = NormalizeHost(host);
 
         if (host.Contains(".gov", StringComparison.Ordinal) || host.EndsWith(".gov", StringComparison.Ordinal))
             return true;
 
         return BlockedHostSuffixes.Any(suffix => host.EndsWith(suffix, StringComparison.Ordinal));
+    }
+
+    public static bool IsDirectoryOrSocialHost(string host)
+    {
+        host = NormalizeHost(host);
+        if (DirectoryHosts.Contains(host))
+            return true;
+
+        return host.EndsWith(".linkedin.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".facebook.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".instagram.com", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".crunchbase.com", StringComparison.OrdinalIgnoreCase);
     }
 
     public static string? ExtractDomain(string? url)
@@ -241,11 +253,8 @@ public static class DomainNormalizer
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return null;
 
-        var host = uri.Host.ToLowerInvariant();
-        if (host.StartsWith("www."))
-            host = host[4..];
-
-        if (IsBlockedHost(host))
+        var host = NormalizeHost(uri.Host);
+        if (IsDirectoryOrSocialHost(host) || IsBlockedHost(host))
             return null;
 
         return host;
@@ -258,7 +267,17 @@ public static class DomainNormalizer
 
         foreach (var result in results)
         {
-            var domain = ExtractDomain(result.Url) ?? result.Domain;
+            if (IsDirectoryOrSocialUrl(result.Url) || IsBlockedUrl(result.Url))
+                continue;
+
+            var domain = ExtractDomain(result.Url);
+            if (string.IsNullOrWhiteSpace(domain) && !string.IsNullOrWhiteSpace(result.Domain))
+            {
+                domain = NormalizeHost(result.Domain);
+                if (IsDirectoryOrSocialHost(domain) || IsBlockedHost(domain))
+                    domain = null;
+            }
+
             if (string.IsNullOrWhiteSpace(domain))
                 continue;
 
@@ -270,5 +289,13 @@ public static class DomainNormalizer
         }
 
         return output;
+    }
+
+    private static string NormalizeHost(string host)
+    {
+        host = host.Trim().ToLowerInvariant();
+        if (host.StartsWith("www."))
+            host = host[4..];
+        return host;
     }
 }

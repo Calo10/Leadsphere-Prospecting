@@ -15,6 +15,7 @@ public interface IContactRepository
         AiContactData contact,
         EmailValidationResult? emailValidation,
         string? locationHint,
+        string? companyLinkedInUrl,
         CancellationToken cancellationToken);
 }
 
@@ -62,9 +63,10 @@ public sealed class ContactRepository : IContactRepository
         AiContactData contact,
         EmailValidationResult? emailValidation,
         string? locationHint,
+        string? companyLinkedInUrl,
         CancellationToken cancellationToken)
     {
-        var row = PersistableContactMapper.Map(contact, locationHint);
+        var row = PersistableContactMapper.Map(contact, locationHint, companyLinkedInUrl);
         if (row is null)
             return false;
 

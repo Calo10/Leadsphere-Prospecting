@@ -1,10 +1,16 @@
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
+using LeadSphere.Discovery.Function.Infrastructure;
+using LeadSphere.Discovery.Function.Models;
 
 namespace LeadSphere.Discovery.Function.Services;
 
 internal static class SocialLinkExtractor
 {
+    private static readonly Regex PersonalLinkedInHrefRegex = new(
+        @"https?://(?:[\w.-]+\.)?linkedin\.com/in/[\w%-]+",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private static readonly (string Key, Regex Pattern)[] PlatformPatterns =
     [
         ("linkedin", new Regex(@"https?://(?:[\w.-]+\.)?linkedin\.com/company/[\w%-./]+", RegexOptions.IgnoreCase | RegexOptions.Compiled)),
@@ -51,6 +57,66 @@ internal static class SocialLinkExtractor
         }
 
         return links;
+    }
+
+    public static List<AiContactData> ExtractPersonalLinkedInContacts(string? html)
+    {
+        var contacts = new List<AiContactData>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(html))
+            return contacts;
+
+        var document = new HtmlDocument();
+        document.LoadHtml(html);
+
+        foreach (var anchor in document.DocumentNode.SelectNodes("//a[@href]") ?? Enumerable.Empty<HtmlNode>())
+        {
+            var href = HtmlEntity.DeEntitize(anchor.GetAttributeValue("href", string.Empty).Trim());
+            if (href.StartsWith("//", StringComparison.Ordinal))
+                href = "https:" + href;
+
+            var match = PersonalLinkedInHrefRegex.Match(href);
+            if (!match.Success)
+                continue;
+
+            var url = LinkedInContactUrl.NormalizePersonal(match.Value);
+            if (url is null || !seen.Add(url))
+                continue;
+
+            var name = NormalizePersonName(HtmlEntity.DeEntitize(anchor.InnerText));
+            if (name is null)
+                continue;
+
+            var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            contacts.Add(new AiContactData
+            {
+                FullName = name,
+                FirstName = parts[0],
+                LastName = parts.Length > 1 ? string.Join(' ', parts.Skip(1)) : null,
+                LinkedInUrl = url
+            });
+        }
+
+        return contacts;
+    }
+
+    private static string? NormalizePersonName(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var name = Regex.Replace(raw, @"\s+", " ").Trim();
+        if (name.Contains("LinkedIn", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length is < 2 or > 4)
+            return null;
+
+        if (parts.Any(p => p.Length < 2 || !char.IsLetter(p[0])))
+            return null;
+
+        return name;
     }
 
     public static List<string> ExtractLogoCandidates(string? html, Uri? baseUri)

@@ -24,6 +24,7 @@ var host = new HostBuilder()
         services.AddScoped<IWebSearchService, WebSearchService>();
         services.AddScoped<IWebScraperService, WebScraperService>();
         services.AddScoped<ICompanyEnrichmentService, CompanyEnrichmentService>();
+        services.AddScoped<ICompanyMarketDataService, CompanyMarketDataService>();
         services.AddScoped<ILinkedInPeopleDiscoveryService, LinkedInPeopleDiscoveryService>();
         services.AddScoped<IContactLinkedInDiscoveryService, ContactLinkedInDiscoveryService>();
         services.AddScoped<IContactDataEnrichmentService, ContactDataEnrichmentService>();
@@ -40,6 +41,15 @@ var host = new HostBuilder()
         services.AddHttpClient("WebScraper", client =>
         {
             client.Timeout = TimeSpan.FromSeconds(20);
+        });
+
+        services.AddHttpClient("MarketData", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.DefaultRequestHeaders.TryAddWithoutValidation(
+                "User-Agent",
+                "Mozilla/5.0 (compatible; LeadSphereDiscovery/1.0)");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json, application/rss+xml, application/xml, text/xml");
         });
 
         services.AddHttpClient("OpenAI", client =>

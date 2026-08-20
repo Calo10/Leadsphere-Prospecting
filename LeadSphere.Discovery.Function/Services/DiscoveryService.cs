@@ -25,6 +25,7 @@ public sealed class DiscoveryService : IDiscoveryService
     private readonly ILinkedInPeopleDiscoveryService _linkedInPeople;
     private readonly IContactLinkedInDiscoveryService _contactLinkedIn;
     private readonly IContactDataEnrichmentService _contactData;
+    private readonly ICompanyMarketDataService _marketData;
     private readonly IOpenAiExtractionService _openAi;
     private readonly DiscoveryOptions _options;
     private readonly ILogger<DiscoveryService> _logger;
@@ -40,6 +41,7 @@ public sealed class DiscoveryService : IDiscoveryService
         ILinkedInPeopleDiscoveryService linkedInPeople,
         IContactLinkedInDiscoveryService contactLinkedIn,
         IContactDataEnrichmentService contactData,
+        ICompanyMarketDataService marketData,
         IOpenAiExtractionService openAi,
         IOptions<DiscoveryOptions> options,
         ILogger<DiscoveryService> logger)
@@ -54,6 +56,7 @@ public sealed class DiscoveryService : IDiscoveryService
         _linkedInPeople = linkedInPeople;
         _contactLinkedIn = contactLinkedIn;
         _contactData = contactData;
+        _marketData = marketData;
         _openAi = openAi;
         _options = options.Value;
         _logger = logger;
@@ -141,7 +144,10 @@ public sealed class DiscoveryService : IDiscoveryService
                     domain,
                     enrichment.LinkedInUrl,
                     cancellationToken);
-                candidate.LinkedInContacts = linkedInContacts.ToList();
+                candidate.LinkedInContacts = ContactQualityFilter.MergeAndRank(
+                    linkedInContacts,
+                    candidate.WebsiteLinkedInContacts,
+                    enrichment.LinkedInUrl);
 
                 var extraction = await _openAi.ExtractAsync(search, candidate, cancellationToken);
 
@@ -167,7 +173,18 @@ public sealed class DiscoveryService : IDiscoveryService
                 if (await _companies.ExistsByDomainAsync(message.OrgId, extraction.Company.Domain, cancellationToken))
                     continue;
 
-                var qualityContacts = ContactQualityFilter.MergeAndRank(linkedInContacts, extraction.Contacts);
+                await _marketData.ApplyAsync(
+                    enrichment,
+                    extraction.Company.Name,
+                    extraction.Company.Domain,
+                    searchIntent.CountryCode,
+                    searchIntent.Language,
+                    cancellationToken);
+
+                var qualityContacts = ContactQualityFilter.MergeAndRank(
+                    candidate.LinkedInContacts,
+                    extraction.Contacts,
+                    enrichment.LinkedInUrl);
                 NormalizeContactPhones(qualityContacts, locationHint);
                 extraction.Contacts = qualityContacts;
 
@@ -175,6 +192,7 @@ public sealed class DiscoveryService : IDiscoveryService
                     extraction.Contacts,
                     extraction.Company.Name,
                     domain,
+                    enrichment.LinkedInUrl,
                     cancellationToken);
 
                 await _contactData.EnrichAsync(
@@ -237,6 +255,7 @@ public sealed class DiscoveryService : IDiscoveryService
                         contact,
                         emailValidation,
                         locationHint,
+                        enrichment.LinkedInUrl,
                         cancellationToken))
                         continue;
 

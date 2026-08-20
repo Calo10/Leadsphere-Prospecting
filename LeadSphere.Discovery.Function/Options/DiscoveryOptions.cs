@@ -10,6 +10,8 @@ public sealed class DiscoveryOptions
     public int MaxContactsPerCompany { get; set; } = 10;
     public int MaxLinkedInPeopleQueriesPerCompany { get; set; } = 6;
     public bool EnableExternalProfileSearch { get; set; } = true;
+    public bool EnableCompanyMarketData { get; set; } = true;
+    public int MaxCompanyNewsItems { get; set; } = 5;
     public bool EnableContactWebEnrichment { get; set; } = true;
     public bool PreferContactsWithEmailOrPhone { get; set; } = true;
     public int MaxEnrichmentQueriesPerCompany { get; set; } = 4;
