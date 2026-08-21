@@ -18,6 +18,7 @@ public sealed class CompanyCandidate
     public string? HomepageHtml { get; set; }
     public List<string> LogoCandidateUrls { get; set; } = [];
     public Dictionary<string, string> SocialLinks { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<AiContactData> WebsiteLinkedInContacts { get; set; } = [];
     public List<AiContactData> LinkedInContacts { get; set; } = [];
 }
 

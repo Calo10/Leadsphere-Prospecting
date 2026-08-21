@@ -25,6 +25,7 @@ public sealed class DiscoveryService : IDiscoveryService
     private readonly ILinkedInPeopleDiscoveryService _linkedInPeople;
     private readonly IContactLinkedInDiscoveryService _contactLinkedIn;
     private readonly IContactDataEnrichmentService _contactData;
+    private readonly ICompanyMarketDataService _marketData;
     private readonly IOpenAiExtractionService _openAi;
     private readonly DiscoveryOptions _options;
     private readonly ILogger<DiscoveryService> _logger;
@@ -40,6 +41,7 @@ public sealed class DiscoveryService : IDiscoveryService
         ILinkedInPeopleDiscoveryService linkedInPeople,
         IContactLinkedInDiscoveryService contactLinkedIn,
         IContactDataEnrichmentService contactData,
+        ICompanyMarketDataService marketData,
         IOpenAiExtractionService openAi,
         IOptions<DiscoveryOptions> options,
         ILogger<DiscoveryService> logger)
@@ -54,6 +56,7 @@ public sealed class DiscoveryService : IDiscoveryService
         _linkedInPeople = linkedInPeople;
         _contactLinkedIn = contactLinkedIn;
         _contactData = contactData;
+        _marketData = marketData;
         _openAi = openAi;
         _options = options.Value;
         _logger = logger;
@@ -69,6 +72,9 @@ public sealed class DiscoveryService : IDiscoveryService
 
         await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Running, null, startedAt, null, cancellationToken);
         await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Running, null, startedAt, null, cancellationToken);
+
+        var companiesInserted = 0;
+        var contactsInserted = 0;
 
         try
         {
@@ -113,9 +119,6 @@ public sealed class DiscoveryService : IDiscoveryService
                 uniqueResults.Count,
                 message.SearchId);
 
-            var companiesInserted = 0;
-            var contactsInserted = 0;
-
             var locationHint = search.Criteria?.Location;
 
             foreach (var result in relevantResults)
@@ -141,7 +144,10 @@ public sealed class DiscoveryService : IDiscoveryService
                     domain,
                     enrichment.LinkedInUrl,
                     cancellationToken);
-                candidate.LinkedInContacts = linkedInContacts.ToList();
+                candidate.LinkedInContacts = ContactQualityFilter.MergeAndRank(
+                    linkedInContacts,
+                    candidate.WebsiteLinkedInContacts,
+                    enrichment.LinkedInUrl);
 
                 var extraction = await _openAi.ExtractAsync(search, candidate, cancellationToken);
 
@@ -167,15 +173,30 @@ public sealed class DiscoveryService : IDiscoveryService
                 if (await _companies.ExistsByDomainAsync(message.OrgId, extraction.Company.Domain, cancellationToken))
                     continue;
 
-                var qualityContacts = ContactQualityFilter.MergeAndRank(linkedInContacts, extraction.Contacts);
+                await _marketData.ApplyAsync(
+                    enrichment,
+                    extraction.Company.Name,
+                    extraction.Company.Domain,
+                    searchIntent.CountryCode,
+                    searchIntent.Language,
+                    cancellationToken);
+
+                var qualityContacts = ContactQualityFilter.MergeAndRank(
+                    candidate.LinkedInContacts,
+                    extraction.Contacts,
+                    enrichment.LinkedInUrl);
                 NormalizeContactPhones(qualityContacts, locationHint);
                 extraction.Contacts = qualityContacts;
 
-                await _contactLinkedIn.ResolveMissingProfilesAsync(
-                    extraction.Contacts,
-                    extraction.Company.Name,
-                    domain,
-                    cancellationToken);
+                if (_options.EnableContactLinkedInWebSearch)
+                {
+                    await _contactLinkedIn.ResolveMissingProfilesAsync(
+                        extraction.Contacts,
+                        extraction.Company.Name,
+                        domain,
+                        enrichment.LinkedInUrl,
+                        cancellationToken);
+                }
 
                 await _contactData.EnrichAsync(
                     extraction.Contacts,
@@ -237,6 +258,7 @@ public sealed class DiscoveryService : IDiscoveryService
                         contact,
                         emailValidation,
                         locationHint,
+                        enrichment.LinkedInUrl,
                         cancellationToken))
                         continue;
 
@@ -266,6 +288,23 @@ public sealed class DiscoveryService : IDiscoveryService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Discovery job {JobId} failed for search {SearchId}", message.JobId, message.SearchId);
+
+            // Results already saved: complete the search so the UI is not "Failed" with companies/contacts.
+            if (companiesInserted > 0 || contactsInserted > 0)
+            {
+                var completedAt = DateTimeOffset.UtcNow;
+                await _discoveryJobs.UpdateCountersAsync(message.OrgId, message.JobId, companiesInserted, contactsInserted, cancellationToken);
+                await _searches.UpdateCountersAsync(message.OrgId, message.SearchId, companiesInserted, contactsInserted, cancellationToken);
+                await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Completed, null, null, completedAt, cancellationToken);
+                await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Completed, null, null, completedAt, cancellationToken);
+                _logger.LogWarning(
+                    ex,
+                    "Discovery job {JobId} stopped after saving {Companies} companies and {Contacts} contacts; marking completed",
+                    message.JobId,
+                    companiesInserted,
+                    contactsInserted);
+                return;
+            }
 
             var errorMessage = ex.Message.Length > 2000 ? ex.Message[..2000] : ex.Message;
             var failedAt = DateTimeOffset.UtcNow;

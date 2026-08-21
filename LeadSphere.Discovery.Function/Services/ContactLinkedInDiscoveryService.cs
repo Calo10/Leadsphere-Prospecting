@@ -1,7 +1,9 @@
 using System.Text.RegularExpressions;
 using LeadSphere.Discovery.Function.Infrastructure;
 using LeadSphere.Discovery.Function.Models;
+using LeadSphere.Discovery.Function.Options;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace LeadSphere.Discovery.Function.Services;
 
@@ -11,6 +13,7 @@ public interface IContactLinkedInDiscoveryService
         IList<AiContactData> contacts,
         string companyName,
         string? domain,
+        string? companyLinkedInUrl,
         CancellationToken cancellationToken);
 }
 
@@ -25,13 +28,16 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
         RegexOptions.Compiled);
 
     private readonly IWebSearchService _webSearch;
+    private readonly DiscoveryOptions _options;
     private readonly ILogger<ContactLinkedInDiscoveryService> _logger;
 
     public ContactLinkedInDiscoveryService(
         IWebSearchService webSearch,
+        IOptions<DiscoveryOptions> options,
         ILogger<ContactLinkedInDiscoveryService> logger)
     {
         _webSearch = webSearch;
+        _options = options.Value;
         _logger = logger;
     }
 
@@ -39,23 +45,28 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
         IList<AiContactData> contacts,
         string companyName,
         string? domain,
+        string? companyLinkedInUrl,
         CancellationToken cancellationToken)
     {
         var cleanCompany = CleanCompanyName(companyName);
+        var remaining = Math.Max(0, _options.MaxContactLinkedInQueriesPerCompany);
 
         foreach (var contact in contacts)
         {
-            contact.LinkedInUrl = LinkedInContactUrl.NormalizePersonal(contact.LinkedInUrl);
-            if (LinkedInContactUrl.IsPersonalProfile(contact.LinkedInUrl))
+            contact.LinkedInUrl = LinkedInContactUrl.NormalizePersonal(contact.LinkedInUrl, companyLinkedInUrl);
+            if (LinkedInContactUrl.IsPersonalProfile(contact.LinkedInUrl, companyLinkedInUrl))
                 continue;
 
             contact.LinkedInUrl = null;
+            if (remaining <= 0)
+                continue;
 
             var fullName = GetFullName(contact);
             if (string.IsNullOrWhiteSpace(fullName))
                 continue;
 
-            var profileUrl = await FindPersonalProfileAsync(fullName, cleanCompany, domain, cancellationToken);
+            remaining--;
+            var profileUrl = await FindPersonalProfileAsync(fullName, cleanCompany, domain, companyLinkedInUrl, cancellationToken);
             if (profileUrl is not null)
             {
                 contact.LinkedInUrl = profileUrl;
@@ -68,6 +79,7 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
         string fullName,
         string companyName,
         string? domain,
+        string? companyLinkedInUrl,
         CancellationToken cancellationToken)
     {
         var queries = new List<string>
@@ -80,14 +92,14 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
 
         queries.Add($"site:linkedin.com/in \"{fullName}\"");
 
-        foreach (var query in queries)
+        foreach (var query in queries.Take(1))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             try
             {
                 var results = await _webSearch.SearchAsync(query, maxResults: 6, context: null, cancellationToken);
-                var match = PickBestProfile(results, fullName, companyName);
+                var match = PickBestProfile(results, fullName, companyName, companyLinkedInUrl);
                 if (match is not null)
                     return match;
             }
@@ -103,7 +115,8 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
     private static string? PickBestProfile(
         IReadOnlyList<WebSearchResult> results,
         string fullName,
-        string companyName)
+        string companyName,
+        string? companyLinkedInUrl)
     {
         string? bestUrl = null;
         var bestScore = 0;
@@ -114,7 +127,7 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
             if (!profileMatch.Success)
                 continue;
 
-            var profileUrl = LinkedInContactUrl.NormalizePersonal(profileMatch.Value);
+            var profileUrl = LinkedInContactUrl.NormalizePersonal(profileMatch.Value, companyLinkedInUrl);
             if (profileUrl is null)
                 continue;
 

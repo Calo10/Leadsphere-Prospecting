@@ -89,8 +89,7 @@ internal static class ContactQualityFilter
         if (!string.IsNullOrWhiteSpace(contact.Email) && GenericEmailFilter.IsGeneric(contact.Email))
             return false;
 
-        var hasLinkedIn = !string.IsNullOrWhiteSpace(contact.LinkedInUrl)
-            && contact.LinkedInUrl.Contains("linkedin.com/in/", StringComparison.OrdinalIgnoreCase);
+        var hasLinkedIn = LinkedInContactUrl.IsPersonalProfile(contact.LinkedInUrl);
 
         var hasDecisionTitle = IsDecisionMakerTitle(contact.JobTitle);
         var hasPersonalEmail = !string.IsNullOrWhiteSpace(contact.Email) && !GenericEmailFilter.IsGeneric(contact.Email);
@@ -99,14 +98,17 @@ internal static class ContactQualityFilter
         return hasLinkedIn || (hasDecisionTitle && (hasPersonalEmail || hasPhone || hasLinkedIn));
     }
 
-    public static List<AiContactData> MergeAndRank(IEnumerable<AiContactData> primary, IEnumerable<AiContactData> secondary)
+    public static List<AiContactData> MergeAndRank(
+        IEnumerable<AiContactData> primary,
+        IEnumerable<AiContactData> secondary,
+        string? companyLinkedInUrl = null)
     {
         var merged = new List<AiContactData>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var contact in primary.Concat(secondary))
         {
-            contact.LinkedInUrl = LinkedInContactUrl.NormalizePersonal(contact.LinkedInUrl);
+            contact.LinkedInUrl = LinkedInContactUrl.NormalizePersonal(contact.LinkedInUrl, companyLinkedInUrl);
 
             if (!IsQualityContact(contact))
                 continue;
@@ -137,8 +139,7 @@ internal static class ContactQualityFilter
             score += 4;
         if (!string.IsNullOrWhiteSpace(contact.Phone))
             score += 3;
-        if (!string.IsNullOrWhiteSpace(contact.LinkedInUrl)
-            && contact.LinkedInUrl.Contains("linkedin.com/in/", StringComparison.OrdinalIgnoreCase))
+        if (LinkedInContactUrl.IsPersonalProfile(contact.LinkedInUrl))
             score += 1;
         return score;
     }
@@ -220,7 +221,7 @@ internal static class SearchResultRelevanceFilter
         if (domain is not null && LowQualityHosts.Contains(domain))
             score -= 1.0;
 
-        if (DomainNormalizer.IsBlockedUrl(result.Url))
+        if (DomainNormalizer.IsBlockedUrl(result.Url) || DomainNormalizer.IsDirectoryOrSocialUrl(result.Url))
             score -= 2.0;
 
         if (text.Contains("jobs", StringComparison.Ordinal) || text.Contains("careers", StringComparison.Ordinal))

@@ -229,7 +229,7 @@ public sealed class ContactDataEnrichmentService : IContactDataEnrichmentService
 
         queries.Add($"\"{fullName}\" contact email \"{companyName}\"");
 
-        foreach (var query in queries.Take(2))
+        foreach (var query in queries.Take(1))
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -289,7 +289,7 @@ public sealed class ContactDataEnrichmentService : IContactDataEnrichmentService
         if (!string.IsNullOrWhiteSpace(domain))
             queries.Add($"\"{fullName}\" {domain} (phone OR teléfono OR contact)");
 
-        foreach (var query in queries.Take(2))
+        foreach (var query in queries.Take(1))
         {
             cancellationToken.ThrowIfCancellationRequested();
             try

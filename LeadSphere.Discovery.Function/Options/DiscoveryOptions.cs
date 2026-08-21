@@ -5,14 +5,23 @@ public sealed class DiscoveryOptions
     public const string SectionName = "Discovery";
 
     public int MaxCompaniesPerSearch { get; set; } = 25;
-    public int MaxSearchQueries { get; set; } = 6;
+    public int MaxSearchQueries { get; set; } = 4;
     public int MaxResultsPerSearchQuery { get; set; } = 20;
-    public int MaxContactsPerCompany { get; set; } = 10;
-    public int MaxLinkedInPeopleQueriesPerCompany { get; set; } = 6;
-    public bool EnableExternalProfileSearch { get; set; } = true;
-    public bool EnableContactWebEnrichment { get; set; } = true;
+    public int MaxContactsPerCompany { get; set; } = 6;
+    public int MaxLinkedInPeopleQueriesPerCompany { get; set; } = 1;
+    public int MaxContactLinkedInQueriesPerCompany { get; set; } = 2;
+    public bool EnableExternalProfileSearch { get; set; } = false;
+    public bool EnableCompanyMarketData { get; set; } = true;
+    public int MaxCompanyNewsItems { get; set; } = 5;
+    public bool EnableContactWebEnrichment { get; set; } = false;
+    public bool EnableContactLinkedInWebSearch { get; set; } = true;
     public bool PreferContactsWithEmailOrPhone { get; set; } = true;
-    public int MaxEnrichmentQueriesPerCompany { get; set; } = 4;
+    public int MaxEnrichmentQueriesPerCompany { get; set; } = 0;
+    /// <summary>
+    /// SerpAPI Starter (~1,000/month): ~4 company queries + 1 people query per company
+    /// + up to 2 LinkedIn fills per company, capped by this budget.
+    /// </summary>
+    public int MaxWebSearchCallsPerSearch { get; set; } = 55;
     public double MinIndustryRelevanceScore { get; set; } = 0.20;
     public double MinCompanyFitScore { get; set; } = 0.45;
 }
