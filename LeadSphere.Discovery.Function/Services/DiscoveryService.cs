@@ -188,12 +188,15 @@ public sealed class DiscoveryService : IDiscoveryService
                 NormalizeContactPhones(qualityContacts, locationHint);
                 extraction.Contacts = qualityContacts;
 
-                await _contactLinkedIn.ResolveMissingProfilesAsync(
-                    extraction.Contacts,
-                    extraction.Company.Name,
-                    domain,
-                    enrichment.LinkedInUrl,
-                    cancellationToken);
+                if (_options.EnableContactLinkedInWebSearch)
+                {
+                    await _contactLinkedIn.ResolveMissingProfilesAsync(
+                        extraction.Contacts,
+                        extraction.Company.Name,
+                        domain,
+                        enrichment.LinkedInUrl,
+                        cancellationToken);
+                }
 
                 await _contactData.EnrichAsync(
                     extraction.Contacts,

@@ -19,30 +19,48 @@ public sealed class WebSearchService : IWebSearchService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly WebSearchOptions _options;
+    private readonly DiscoveryOptions _discovery;
     private readonly ILogger<WebSearchService> _logger;
+    private int _calls;
 
     public WebSearchService(
         IHttpClientFactory httpClientFactory,
         IOptions<WebSearchOptions> options,
+        IOptions<DiscoveryOptions> discovery,
         ILogger<WebSearchService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _options = options.Value;
+        _discovery = discovery.Value;
         _logger = logger;
     }
 
-    public Task<IReadOnlyList<WebSearchResult>> SearchAsync(
+    public async Task<IReadOnlyList<WebSearchResult>> SearchAsync(
         string query,
         int maxResults,
         WebSearchContext? context,
         CancellationToken cancellationToken)
     {
+        var budget = Math.Max(0, _discovery.MaxWebSearchCallsPerSearch);
+        var used = Interlocked.Increment(ref _calls);
+        if (budget > 0 && used > budget)
+        {
+            if (used == budget + 1)
+            {
+                _logger.LogWarning(
+                    "Web search budget reached ({Budget} calls) for this discovery job; skipping remaining queries",
+                    budget);
+            }
+
+            return [];
+        }
+
         var provider = _options.Provider.Trim();
         return provider.ToLowerInvariant() switch
         {
-            "serpapi" => SearchSerpApiAsync(query, maxResults, context, cancellationToken),
-            "google" => SearchGoogleAsync(query, maxResults, context, cancellationToken),
-            "bing" => SearchBingAsync(query, maxResults, context, cancellationToken),
+            "serpapi" => await SearchSerpApiAsync(query, maxResults, context, cancellationToken),
+            "google" => await SearchGoogleAsync(query, maxResults, context, cancellationToken),
+            "bing" => await SearchBingAsync(query, maxResults, context, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported web search provider '{provider}'.")
         };
     }

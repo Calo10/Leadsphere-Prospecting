@@ -65,32 +65,9 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
         var cleanName = CleanCompanyName(companyName);
         var targetCount = Math.Min(_options.MaxContactsPerCompany, 12);
 
-        foreach (var roleQuery in DecisionQueries.Take(_options.MaxLinkedInPeopleQueriesPerCompany))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var query = $"site:linkedin.com/in \"{cleanName}\" ({roleQuery})";
-            await CollectFromQueryAsync(query, linkedInCompanyUrl, contacts, seenUrls, maxResults: 8, cancellationToken);
-        }
-
-        var companySlug = LinkedInContactUrl.ExtractCompanySlug(linkedInCompanyUrl);
-        if (!string.IsNullOrWhiteSpace(companySlug))
-        {
-            var companyQuery = $"site:linkedin.com/in {companySlug} (CEO OR Founder OR Director OR VP OR \"Head of\")";
-            await CollectFromQueryAsync(companyQuery, linkedInCompanyUrl, contacts, seenUrls, maxResults: 8, cancellationToken);
-        }
-
-        if (contacts.Count < targetCount && !string.IsNullOrWhiteSpace(domain))
-        {
-            var domainQuery = $"site:linkedin.com/in \"{domain}\" (CEO OR Founder OR Director OR VP OR \"Head of Sales\" OR CMO)";
-            await CollectFromQueryAsync(domainQuery, linkedInCompanyUrl, contacts, seenUrls, maxResults: 8, cancellationToken);
-        }
-
-        if (contacts.Count < targetCount)
-        {
-            var broadQuery = $"site:linkedin.com/in \"{cleanName}\" (executive OR leadership OR \"general manager\" OR partner)";
-            await CollectFromQueryAsync(broadQuery, linkedInCompanyUrl, contacts, seenUrls, maxResults: 6, cancellationToken);
-        }
+        var roleClause = string.Join(" OR ", DecisionQueries);
+        var query = $"site:linkedin.com/in \"{cleanName}\" ({roleClause})";
+        await CollectFromQueryAsync(query, linkedInCompanyUrl, contacts, seenUrls, maxResults: 10, cancellationToken);
 
         _logger.LogInformation("Discovered {Count} LinkedIn decision-makers for {Company}", contacts.Count, cleanName);
         return ContactQualityFilter.MergeAndRank(contacts, [], linkedInCompanyUrl).Take(targetCount).ToList();

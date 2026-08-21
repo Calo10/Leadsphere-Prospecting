@@ -1,7 +1,9 @@
 using System.Text.RegularExpressions;
 using LeadSphere.Discovery.Function.Infrastructure;
 using LeadSphere.Discovery.Function.Models;
+using LeadSphere.Discovery.Function.Options;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace LeadSphere.Discovery.Function.Services;
 
@@ -26,13 +28,16 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
         RegexOptions.Compiled);
 
     private readonly IWebSearchService _webSearch;
+    private readonly DiscoveryOptions _options;
     private readonly ILogger<ContactLinkedInDiscoveryService> _logger;
 
     public ContactLinkedInDiscoveryService(
         IWebSearchService webSearch,
+        IOptions<DiscoveryOptions> options,
         ILogger<ContactLinkedInDiscoveryService> logger)
     {
         _webSearch = webSearch;
+        _options = options.Value;
         _logger = logger;
     }
 
@@ -44,6 +49,7 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
         CancellationToken cancellationToken)
     {
         var cleanCompany = CleanCompanyName(companyName);
+        var remaining = Math.Max(0, _options.MaxContactLinkedInQueriesPerCompany);
 
         foreach (var contact in contacts)
         {
@@ -52,11 +58,14 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
                 continue;
 
             contact.LinkedInUrl = null;
+            if (remaining <= 0)
+                continue;
 
             var fullName = GetFullName(contact);
             if (string.IsNullOrWhiteSpace(fullName))
                 continue;
 
+            remaining--;
             var profileUrl = await FindPersonalProfileAsync(fullName, cleanCompany, domain, companyLinkedInUrl, cancellationToken);
             if (profileUrl is not null)
             {
@@ -83,7 +92,7 @@ public sealed class ContactLinkedInDiscoveryService : IContactLinkedInDiscoveryS
 
         queries.Add($"site:linkedin.com/in \"{fullName}\"");
 
-        foreach (var query in queries)
+        foreach (var query in queries.Take(1))
         {
             cancellationToken.ThrowIfCancellationRequested();
 
