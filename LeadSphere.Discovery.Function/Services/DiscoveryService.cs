@@ -73,6 +73,9 @@ public sealed class DiscoveryService : IDiscoveryService
         await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Running, null, startedAt, null, cancellationToken);
         await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Running, null, startedAt, null, cancellationToken);
 
+        var companiesInserted = 0;
+        var contactsInserted = 0;
+
         try
         {
             var search = await _searches.GetByIdAsync(message.OrgId, message.SearchId, cancellationToken)
@@ -115,9 +118,6 @@ public sealed class DiscoveryService : IDiscoveryService
                 relevantResults.Count,
                 uniqueResults.Count,
                 message.SearchId);
-
-            var companiesInserted = 0;
-            var contactsInserted = 0;
 
             var locationHint = search.Criteria?.Location;
 
@@ -285,6 +285,23 @@ public sealed class DiscoveryService : IDiscoveryService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Discovery job {JobId} failed for search {SearchId}", message.JobId, message.SearchId);
+
+            // Results already saved: complete the search so the UI is not "Failed" with companies/contacts.
+            if (companiesInserted > 0 || contactsInserted > 0)
+            {
+                var completedAt = DateTimeOffset.UtcNow;
+                await _discoveryJobs.UpdateCountersAsync(message.OrgId, message.JobId, companiesInserted, contactsInserted, cancellationToken);
+                await _searches.UpdateCountersAsync(message.OrgId, message.SearchId, companiesInserted, contactsInserted, cancellationToken);
+                await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Completed, null, null, completedAt, cancellationToken);
+                await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Completed, null, null, completedAt, cancellationToken);
+                _logger.LogWarning(
+                    ex,
+                    "Discovery job {JobId} stopped after saving {Companies} companies and {Contacts} contacts; marking completed",
+                    message.JobId,
+                    companiesInserted,
+                    contactsInserted);
+                return;
+            }
 
             var errorMessage = ex.Message.Length > 2000 ? ex.Message[..2000] : ex.Message;
             var failedAt = DateTimeOffset.UtcNow;

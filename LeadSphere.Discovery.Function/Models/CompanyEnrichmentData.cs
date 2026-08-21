@@ -24,6 +24,7 @@ public sealed class CompanyNewsItem
     public string? Url { get; set; }
     public string? Source { get; set; }
     public DateTimeOffset? PublishedAt { get; set; }
+    public string? ImageUrl { get; set; }
 }
 
 public sealed class EmailValidationResult

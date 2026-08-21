@@ -4,7 +4,7 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
     "ServiceBusConnection": "<azure-service-bus-connection-string>",
-    "DiscoveryJobsQueueName": "leadsphere-discovery-jobs",
+    "DiscoveryJobsQueueName": "leadsphere-discovery-jobs-dev",
     "ConnectionStrings__LeadSphereDb": "<sql-server-connection-string>",
     "Discovery__MaxCompaniesPerSearch": "25",
     "Discovery__MaxSearchQueries": "6",

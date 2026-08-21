@@ -143,13 +143,15 @@ public sealed class CompanyMarketDataService : ICompanyMarketDataService
                 Title = WebUtility.HtmlDecode(title),
                 Url = string.IsNullOrWhiteSpace(link) ? null : link,
                 Source = string.IsNullOrWhiteSpace(source) ? ExtractSourceFromTitle(title) : source,
-                PublishedAt = publishedAt
+                PublishedAt = publishedAt,
+                ImageUrl = ExtractRssImageUrl(item)
             });
 
             if (items.Count >= Math.Clamp(_options.MaxCompanyNewsItems, 1, 10))
                 break;
         }
 
+        await AttachYahooThumbnailsAsync(items, companyName, cancellationToken);
         return items;
     }
 
@@ -270,6 +272,102 @@ public sealed class CompanyMarketDataService : ICompanyMarketDataService
             score += 6;
 
         return score;
+    }
+
+    private async Task AttachYahooThumbnailsAsync(
+        IList<CompanyNewsItem> items,
+        string companyName,
+        CancellationToken cancellationToken)
+    {
+        if (items.All(n => !string.IsNullOrWhiteSpace(n.ImageUrl)))
+            return;
+
+        var url =
+            $"https://query1.finance.yahoo.com/v1/finance/search?q={Uri.EscapeDataString(companyName)}&quotesCount=0&newsCount=8";
+        using var document = await GetJsonAsync(url, cancellationToken);
+        if (document is null
+            || !document.RootElement.TryGetProperty("news", out var news)
+            || news.ValueKind != JsonValueKind.Array)
+            return;
+
+        var yahooItems = new List<(string Title, string? ImageUrl)>();
+        foreach (var article in news.EnumerateArray())
+        {
+            var title = article.TryGetProperty("title", out var titleEl) ? titleEl.GetString() : null;
+            if (string.IsNullOrWhiteSpace(title))
+                continue;
+
+            string? imageUrl = null;
+            if (article.TryGetProperty("thumbnail", out var thumb)
+                && thumb.TryGetProperty("resolutions", out var resolutions)
+                && resolutions.ValueKind == JsonValueKind.Array)
+            {
+                var bestWidth = 0;
+                foreach (var resolution in resolutions.EnumerateArray())
+                {
+                    var width = resolution.TryGetProperty("width", out var widthEl) && widthEl.ValueKind == JsonValueKind.Number
+                        ? widthEl.GetInt32()
+                        : 0;
+                    var src = resolution.TryGetProperty("url", out var srcEl) ? srcEl.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(src) || width < bestWidth)
+                        continue;
+                    bestWidth = width;
+                    imageUrl = src;
+                }
+            }
+
+            yahooItems.Add((title, imageUrl));
+        }
+
+        foreach (var item in items)
+        {
+            if (!string.IsNullOrWhiteSpace(item.ImageUrl))
+                continue;
+
+            var match = yahooItems.FirstOrDefault(y => TitlesLikelyMatch(item.Title, y.Title));
+            if (!string.IsNullOrWhiteSpace(match.ImageUrl))
+                item.ImageUrl = match.ImageUrl;
+        }
+    }
+
+    private static string? ExtractRssImageUrl(XElement item)
+    {
+        XNamespace media = "http://search.yahoo.com/mrss/";
+        var mediaUrl = item.Descendants(media + "content").FirstOrDefault()?.Attribute("url")?.Value
+            ?? item.Descendants(media + "thumbnail").FirstOrDefault()?.Attribute("url")?.Value;
+        if (!string.IsNullOrWhiteSpace(mediaUrl))
+            return mediaUrl.Trim();
+
+        var enclosure = item.Element("enclosure");
+        var enclosureType = enclosure?.Attribute("type")?.Value;
+        var enclosureUrl = enclosure?.Attribute("url")?.Value;
+        if (!string.IsNullOrWhiteSpace(enclosureUrl)
+            && (string.IsNullOrWhiteSpace(enclosureType) || enclosureType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)))
+            return enclosureUrl.Trim();
+
+        return null;
+    }
+
+    private static bool TitlesLikelyMatch(string left, string right)
+    {
+        var a = TokenizeTitle(left).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var b = TokenizeTitle(right).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (a.Count == 0 || b.Count == 0)
+            return false;
+
+        var overlap = a.Count(token => b.Contains(token));
+        return overlap >= 3 || overlap * 2 >= Math.Min(a.Count, b.Count);
+    }
+
+    private static IEnumerable<string> TokenizeTitle(string title)
+    {
+        var cut = title.LastIndexOf(" - ", StringComparison.Ordinal);
+        if (cut > 0)
+            title = title[..cut];
+
+        return title.ToLowerInvariant()
+            .Split([' ', ',', '-', '/', '|', ':', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(t => t.Length > 3);
     }
 
     private async Task<string?> GetStringAsync(string url, CancellationToken cancellationToken)
