@@ -12,7 +12,8 @@ public interface IWebSearchService
         string query,
         int maxResults,
         WebSearchContext? context,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        bool countAgainstBudget = true);
 }
 
 public sealed class WebSearchService : IWebSearchService
@@ -39,20 +40,24 @@ public sealed class WebSearchService : IWebSearchService
         string query,
         int maxResults,
         WebSearchContext? context,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool countAgainstBudget = true)
     {
-        var budget = Math.Max(0, _discovery.MaxWebSearchCallsPerSearch);
-        var used = Interlocked.Increment(ref _calls);
-        if (budget > 0 && used > budget)
+        if (countAgainstBudget)
         {
-            if (used == budget + 1)
+            var budget = Math.Max(0, _discovery.MaxWebSearchCallsPerSearch);
+            var used = Interlocked.Increment(ref _calls);
+            if (budget > 0 && used > budget)
             {
-                _logger.LogWarning(
-                    "Web search budget reached ({Budget} calls) for this discovery job; skipping remaining queries",
-                    budget);
-            }
+                if (used == budget + 1)
+                {
+                    _logger.LogWarning(
+                        "Web search budget reached ({Budget} calls) for this discovery job; skipping remaining queries",
+                        budget);
+                }
 
-            return [];
+                return [];
+            }
         }
 
         var provider = _options.Provider.Trim();
