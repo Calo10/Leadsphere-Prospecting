@@ -13,6 +13,7 @@ var host = new HostBuilder()
         services.Configure<DiscoveryOptions>(context.Configuration.GetSection(DiscoveryOptions.SectionName));
         services.Configure<WebSearchOptions>(context.Configuration.GetSection(WebSearchOptions.SectionName));
         services.Configure<OpenAiOptions>(context.Configuration.GetSection(OpenAiOptions.SectionName));
+        services.Configure<SignalEvaluationOptions>(context.Configuration.GetSection(SignalEvaluationOptions.SectionName));
 
         services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
 
@@ -20,6 +21,9 @@ var host = new HostBuilder()
         services.AddScoped<IDiscoveryJobRepository, DiscoveryJobRepository>();
         services.AddScoped<ICompanyRepository, CompanyRepository>();
         services.AddScoped<IContactRepository, ContactRepository>();
+        services.AddScoped<ISignalRepository, SignalRepository>();
+        services.AddScoped<ISignalIntelligenceCollector, SignalIntelligenceCollector>();
+        services.AddScoped<ISignalEvaluationService, SignalEvaluationService>();
 
         services.AddScoped<IWebSearchService, WebSearchService>();
         services.AddScoped<IWebScraperService, WebScraperService>();

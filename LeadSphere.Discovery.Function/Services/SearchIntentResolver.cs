@@ -124,17 +124,34 @@ internal static class SearchIntentResolver
         if (string.IsNullOrWhiteSpace(location))
             return null;
 
-        if (UsStateSerpLocations.TryGetValue(location, out var serpLocation))
-            return serpLocation;
+        var cleaned = Regex.Replace(location.Trim(), @"\s+", " ");
+        if (UsStateSerpLocations.TryGetValue(cleaned, out var exact))
+            return exact;
 
-        if (location.Contains("united states", StringComparison.OrdinalIgnoreCase) ||
-            location.Contains("usa", StringComparison.OrdinalIgnoreCase))
+        var withoutCountry = Regex.Replace(
+            cleaned,
+            @"\s*,\s*(united states|u\.s\.a\.?|usa|u\.s\.?|us)$",
+            string.Empty,
+            RegexOptions.IgnoreCase).Trim();
+        if (withoutCountry.Length > 0 && UsStateSerpLocations.TryGetValue(withoutCountry, out var stateOnly))
+            return stateOnly;
+
+        foreach (var (key, value) in UsStateSerpLocations)
+        {
+            if (Regex.IsMatch(cleaned, $@"\b{Regex.Escape(key)}\b", RegexOptions.IgnoreCase))
+                return value;
+        }
+
+        if (Regex.IsMatch(cleaned, @"\b(united states|u\.s\.a\.?|usa|u\.s\.?)\b", RegexOptions.IgnoreCase)
+            || Regex.IsMatch(cleaned, @"\bus\b", RegexOptions.IgnoreCase))
             return "United States";
 
-        if (location.Contains("mexico", StringComparison.OrdinalIgnoreCase) || location.Contains("méxico", StringComparison.OrdinalIgnoreCase))
+        if (cleaned.Contains("mexico", StringComparison.OrdinalIgnoreCase)
+            || cleaned.Contains("méxico", StringComparison.OrdinalIgnoreCase))
             return "Mexico";
 
-        return $"{location}";
+        // SerpAPI 400s on unknown location strings — omit and rely on gl instead.
+        return null;
     }
 
     private static string ResolveCountryCode(string? location, string profile)

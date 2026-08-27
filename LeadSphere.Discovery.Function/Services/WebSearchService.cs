@@ -12,7 +12,8 @@ public interface IWebSearchService
         string query,
         int maxResults,
         WebSearchContext? context,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        bool countAgainstBudget = true);
 }
 
 public sealed class WebSearchService : IWebSearchService
@@ -39,20 +40,24 @@ public sealed class WebSearchService : IWebSearchService
         string query,
         int maxResults,
         WebSearchContext? context,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool countAgainstBudget = true)
     {
-        var budget = Math.Max(0, _discovery.MaxWebSearchCallsPerSearch);
-        var used = Interlocked.Increment(ref _calls);
-        if (budget > 0 && used > budget)
+        if (countAgainstBudget)
         {
-            if (used == budget + 1)
+            var budget = Math.Max(0, _discovery.MaxWebSearchCallsPerSearch);
+            var used = Interlocked.Increment(ref _calls);
+            if (budget > 0 && used > budget)
             {
-                _logger.LogWarning(
-                    "Web search budget reached ({Budget} calls) for this discovery job; skipping remaining queries",
-                    budget);
-            }
+                if (used == budget + 1)
+                {
+                    _logger.LogWarning(
+                        "Web search budget reached ({Budget} calls) for this discovery job; skipping remaining queries",
+                        budget);
+                }
 
-            return [];
+                return [];
+            }
         }
 
         var provider = _options.Provider.Trim();
@@ -74,21 +79,47 @@ public sealed class WebSearchService : IWebSearchService
         if (string.IsNullOrWhiteSpace(_options.SerpApi.ApiKey))
             throw new InvalidOperationException("WebSearch:SerpApi:ApiKey is not configured.");
 
-        var num = Math.Clamp(maxResults, 1, 20);
-        var url =
-            $"https://serpapi.com/search.json?engine=google&q={Uri.EscapeDataString(query)}&num={num}&api_key={Uri.EscapeDataString(_options.SerpApi.ApiKey)}";
-
-        if (!string.IsNullOrWhiteSpace(context?.Location))
-            url += $"&location={Uri.EscapeDataString(context.Location)}";
-        if (!string.IsNullOrWhiteSpace(context?.CountryCode))
-            url += $"&gl={Uri.EscapeDataString(context.CountryCode)}";
-        if (!string.IsNullOrWhiteSpace(context?.Language))
-            url += $"&hl={Uri.EscapeDataString(context.Language)}";
+        var num = Math.Clamp(maxResults, 1, 10);
+        var trimmedQuery = query.Length > 200 ? query[..200] : query;
+        var url = BuildSerpApiUrl(trimmedQuery, num, context);
 
         using var response = await CreateClient().GetAsync(url, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning(
+                "SerpAPI {Status} for query '{Query}'. Body={Body}",
+                (int)response.StatusCode,
+                trimmedQuery,
+                Truncate(body, 400));
+
+            if ((int)response.StatusCode == 400 && !string.IsNullOrWhiteSpace(context?.Location))
+            {
+                _logger.LogInformation("Retrying SerpAPI without location after 400.");
+                return await SearchSerpApiAsync(
+                    trimmedQuery,
+                    maxResults,
+                    new WebSearchContext
+                    {
+                        Location = null,
+                        CountryCode = context.CountryCode,
+                        Language = context.Language
+                    },
+                    cancellationToken);
+            }
+
+            return [];
+        }
+
+        using var document = JsonDocument.Parse(body);
+        if (document.RootElement.TryGetProperty("error", out var error)
+            && error.ValueKind == JsonValueKind.String)
+        {
+            _logger.LogWarning("SerpAPI error for query '{Query}': {Error}", trimmedQuery, error.GetString());
+            return [];
+        }
+
         if (!document.RootElement.TryGetProperty("organic_results", out var organic))
             return [];
 
@@ -104,6 +135,24 @@ public sealed class WebSearchService : IWebSearchService
             .Where(r => !string.IsNullOrWhiteSpace(r.Url) && !DomainNormalizer.IsBlockedUrl(r.Url))
             .ToList();
     }
+
+    private string BuildSerpApiUrl(string query, int num, WebSearchContext? context)
+    {
+        var url =
+            $"https://serpapi.com/search.json?engine=google&q={Uri.EscapeDataString(query)}&num={num}&api_key={Uri.EscapeDataString(_options.SerpApi.ApiKey)}";
+
+        if (!string.IsNullOrWhiteSpace(context?.Location))
+            url += $"&location={Uri.EscapeDataString(context.Location)}";
+        if (!string.IsNullOrWhiteSpace(context?.CountryCode))
+            url += $"&gl={Uri.EscapeDataString(context.CountryCode.Trim().ToLowerInvariant())}";
+        if (!string.IsNullOrWhiteSpace(context?.Language))
+            url += $"&hl={Uri.EscapeDataString(context.Language.Trim().ToLowerInvariant())}";
+
+        return url;
+    }
+
+    private static string Truncate(string value, int max) =>
+        value.Length <= max ? value : value[..max];
 
     private async Task<IReadOnlyList<WebSearchResult>> SearchGoogleAsync(
         string query,
