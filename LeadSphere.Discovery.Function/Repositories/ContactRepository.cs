@@ -7,11 +7,12 @@ namespace LeadSphere.Discovery.Function.Repositories;
 public interface IContactRepository
 {
     Task<bool> ExistsByEmailAsync(Guid orgId, string email, CancellationToken cancellationToken);
-    Task<bool> ExistsByNameAsync(Guid orgId, Guid companyId, string fullName, CancellationToken cancellationToken);
+    Task<bool> ExistsByNameAsync(Guid orgId, Guid? companyId, string fullName, CancellationToken cancellationToken);
+    Task<bool> ExistsByLinkedInAsync(Guid orgId, string linkedInUrl, CancellationToken cancellationToken);
     Task<bool> InsertAsync(
         Guid orgId,
         Guid searchId,
-        Guid companyId,
+        Guid? companyId,
         AiContactData contact,
         EmailValidationResult? emailValidation,
         string? locationHint,
@@ -41,14 +42,14 @@ public sealed class ContactRepository : IContactRepository
         return count > 0;
     }
 
-    public async Task<bool> ExistsByNameAsync(Guid orgId, Guid companyId, string fullName, CancellationToken cancellationToken)
+    public async Task<bool> ExistsByNameAsync(Guid orgId, Guid? companyId, string fullName, CancellationToken cancellationToken)
     {
         const string sql = @"
             SELECT COUNT(1)
             FROM ls_contacts
             WHERE org_id = @OrgId
-              AND company_id = @CompanyId
-              AND LTRIM(RTRIM(CONCAT(first_name, ' ', last_name))) = @FullName;";
+              AND LTRIM(RTRIM(CONCAT(first_name, ' ', last_name))) = @FullName
+              AND ((@CompanyId IS NULL AND company_id IS NULL) OR company_id = @CompanyId);";
 
         await using var connection = _connectionFactory.CreateConnection();
         var command = new CommandDefinition(sql, new { OrgId = orgId, CompanyId = companyId, FullName = fullName }, cancellationToken: cancellationToken);
@@ -56,10 +57,23 @@ public sealed class ContactRepository : IContactRepository
         return count > 0;
     }
 
+    public async Task<bool> ExistsByLinkedInAsync(Guid orgId, string linkedInUrl, CancellationToken cancellationToken)
+    {
+        const string sql = @"
+            SELECT COUNT(1)
+            FROM ls_contacts
+            WHERE org_id = @OrgId AND linkedin_url = @LinkedInUrl;";
+
+        await using var connection = _connectionFactory.CreateConnection();
+        var command = new CommandDefinition(sql, new { OrgId = orgId, LinkedInUrl = linkedInUrl }, cancellationToken: cancellationToken);
+        var count = await connection.ExecuteScalarAsync<int>(command);
+        return count > 0;
+    }
+
     public async Task<bool> InsertAsync(
         Guid orgId,
         Guid searchId,
-        Guid companyId,
+        Guid? companyId,
         AiContactData contact,
         EmailValidationResult? emailValidation,
         string? locationHint,

@@ -68,18 +68,35 @@ public sealed class DiscoveryService : IDiscoveryService
 
         var jobExists = await _discoveryJobs.ExistsAsync(message.OrgId, message.JobId, message.SearchId, cancellationToken);
         if (!jobExists)
-            throw new InvalidOperationException($"Discovery job {message.JobId} was not found for search {message.SearchId}.");
-
-        await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Running, null, startedAt, null, cancellationToken);
-        await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Running, null, startedAt, null, cancellationToken);
+        {
+            _logger.LogInformation(
+                "Discovery job {JobId} is gone for search {SearchId}; treating as deleted and stopping.",
+                message.JobId,
+                message.SearchId);
+            return;
+        }
 
         var companiesInserted = 0;
         var contactsInserted = 0;
 
+        if (await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken))
+            return;
+
+        await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Running, null, startedAt, null, cancellationToken);
+        await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Running, null, startedAt, null, cancellationToken);
+
+        if (await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken))
+            return;
+
         try
         {
-            var search = await _searches.GetByIdAsync(message.OrgId, message.SearchId, cancellationToken)
-                ?? throw new InvalidOperationException($"Search {message.SearchId} was not found.");
+            var search = await _searches.GetByIdAsync(message.OrgId, message.SearchId, cancellationToken);
+            if (search is null
+                || string.Equals(search.Status, JobStatuses.Cancelled, StringComparison.OrdinalIgnoreCase))
+            {
+                await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken);
+                return;
+            }
 
             var searchIntent = SearchIntentResolver.Resolve(search);
             var searchContext = new WebSearchContext
@@ -89,6 +106,14 @@ public sealed class DiscoveryService : IDiscoveryService
                 Language = searchIntent.Language
             };
 
+            var locationHint = search.Criteria?.Location;
+
+            if (!search.TargetCompanies)
+            {
+                contactsInserted = await DiscoverContactsOnlyAsync(message, search, searchContext, locationHint, cancellationToken);
+            }
+            else
+            {
             var queries = WebSearchQueryBuilder.BuildQueries(search, _options.MaxSearchQueries);
             _logger.LogInformation(
                 "Built {QueryCount} web search queries for search {SearchId}: {Queries}",
@@ -100,6 +125,9 @@ public sealed class DiscoveryService : IDiscoveryService
             foreach (var query in queries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken))
+                    return;
+
                 var results = await _webSearch.SearchAsync(
                     query,
                     _options.MaxResultsPerSearchQuery,
@@ -119,11 +147,11 @@ public sealed class DiscoveryService : IDiscoveryService
                 uniqueResults.Count,
                 message.SearchId);
 
-            var locationHint = search.Criteria?.Location;
-
             foreach (var result in relevantResults)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken))
+                    return;
 
                 var domain = DomainNormalizer.ExtractDomain(result.Url);
                 if (string.IsNullOrWhiteSpace(domain))
@@ -139,15 +167,18 @@ public sealed class DiscoveryService : IDiscoveryService
                 var enrichment = await _enrichment.EnrichAsync(candidate, cancellationToken);
                 MergeEnrichmentIntoCandidate(candidate, enrichment);
 
-                var linkedInContacts = await _linkedInPeople.DiscoverDecisionMakersAsync(
-                    candidate.Name,
-                    domain,
-                    enrichment.LinkedInUrl,
-                    cancellationToken);
-                candidate.LinkedInContacts = ContactQualityFilter.MergeAndRank(
-                    linkedInContacts,
-                    candidate.WebsiteLinkedInContacts,
-                    enrichment.LinkedInUrl);
+                if (search.TargetContacts)
+                {
+                    var linkedInContacts = await _linkedInPeople.DiscoverDecisionMakersAsync(
+                        candidate.Name,
+                        domain,
+                        enrichment.LinkedInUrl,
+                        cancellationToken);
+                    candidate.LinkedInContacts = ContactQualityFilter.MergeAndRank(
+                        linkedInContacts,
+                        candidate.WebsiteLinkedInContacts,
+                        enrichment.LinkedInUrl);
+                }
 
                 var extraction = await _openAi.ExtractAsync(search, candidate, cancellationToken);
 
@@ -181,6 +212,9 @@ public sealed class DiscoveryService : IDiscoveryService
                     searchIntent.Language,
                     cancellationToken);
 
+                Dictionary<string, EmailValidationResult> validationByEmail = new(StringComparer.OrdinalIgnoreCase);
+                if (search.TargetContacts)
+                {
                 var qualityContacts = ContactQualityFilter.MergeAndRank(
                     candidate.LinkedInContacts,
                     extraction.Contacts,
@@ -212,7 +246,8 @@ public sealed class DiscoveryService : IDiscoveryService
 
                 var emailValidations = await _enrichment.ValidateContactEmailsAsync(candidate, extraction.Contacts, cancellationToken);
                 enrichment.EmailValidations = emailValidations.ToList();
-                var validationByEmail = emailValidations.ToDictionary(v => v.Email, StringComparer.OrdinalIgnoreCase);
+                validationByEmail = emailValidations.ToDictionary(v => v.Email, StringComparer.OrdinalIgnoreCase);
+                }
 
                 var companyId = await _companies.InsertAsync(
                     message.OrgId,
@@ -224,6 +259,8 @@ public sealed class DiscoveryService : IDiscoveryService
                 companiesInserted++;
 
                 var contactCount = 0;
+                if (search.TargetContacts)
+                {
                 var contactsToInsert = extraction.Contacts
                     .Where(ContactQualityFilter.IsQualityContact)
                     .Where(c => string.IsNullOrWhiteSpace(c.Email) || !GenericEmailFilter.IsGeneric(c.Email))
@@ -265,6 +302,7 @@ public sealed class DiscoveryService : IDiscoveryService
                     contactsInserted++;
                     contactCount++;
                 }
+                }
 
                 _logger.LogInformation(
                     "Inserted company {CompanyName} ({Domain}) with {ContactCount} contacts",
@@ -272,6 +310,10 @@ public sealed class DiscoveryService : IDiscoveryService
                     extraction.Company.Domain,
                     contactCount);
             }
+            }
+
+            if (await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken))
+                return;
 
             var completedAt = DateTimeOffset.UtcNow;
             await _discoveryJobs.UpdateCountersAsync(message.OrgId, message.JobId, companiesInserted, contactsInserted, cancellationToken);
@@ -285,8 +327,15 @@ public sealed class DiscoveryService : IDiscoveryService
                 companiesInserted,
                 contactsInserted);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
+            if (await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken))
+                return;
+
             _logger.LogError(ex, "Discovery job {JobId} failed for search {SearchId}", message.JobId, message.SearchId);
 
             // Results already saved: complete the search so the UI is not "Failed" with companies/contacts.
@@ -315,8 +364,88 @@ public sealed class DiscoveryService : IDiscoveryService
         }
     }
 
-    private async Task<bool> IsDuplicateContactAsync(Guid orgId, Guid companyId, AiContactData contact, CancellationToken cancellationToken)
+    private async Task<bool> TryAbortIfCancelledAsync(
+        DiscoveryJobMessage message,
+        int companiesInserted,
+        int contactsInserted,
+        CancellationToken cancellationToken)
     {
+        if (!await _searches.IsCancelledAsync(message.OrgId, message.SearchId, cancellationToken))
+            return false;
+
+        var stoppedAt = DateTimeOffset.UtcNow;
+        if (await _discoveryJobs.ExistsAsync(message.OrgId, message.JobId, message.SearchId, cancellationToken))
+        {
+            await _discoveryJobs.UpdateCountersAsync(message.OrgId, message.JobId, companiesInserted, contactsInserted, cancellationToken);
+            await _discoveryJobs.UpdateStatusAsync(
+                message.OrgId,
+                message.JobId,
+                JobStatuses.Cancelled,
+                null,
+                null,
+                stoppedAt,
+                cancellationToken);
+        }
+
+        _logger.LogInformation(
+            "Discovery job {JobId} stopped because search {SearchId} was cancelled or deleted. Companies={Companies} Contacts={Contacts}",
+            message.JobId,
+            message.SearchId,
+            companiesInserted,
+            contactsInserted);
+        return true;
+    }
+
+    private async Task<int> DiscoverContactsOnlyAsync(
+        DiscoveryJobMessage message,
+        SearchRecord search,
+        WebSearchContext searchContext,
+        string? locationHint,
+        CancellationToken cancellationToken)
+    {
+        var people = await _linkedInPeople.DiscoverMatchingPeopleAsync(
+            search,
+            searchContext,
+            _options.MaxContactsPerSearch,
+            cancellationToken);
+
+        var inserted = 0;
+        foreach (var contact in people)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (await TryAbortIfCancelledAsync(message, 0, inserted, cancellationToken))
+                return inserted;
+
+            if (await IsDuplicateContactAsync(message.OrgId, companyId: null, contact, cancellationToken))
+                continue;
+
+            if (!await _contacts.InsertAsync(
+                    message.OrgId,
+                    message.SearchId,
+                    companyId: null,
+                    contact,
+                    emailValidation: null,
+                    locationHint,
+                    companyLinkedInUrl: null,
+                    cancellationToken))
+                continue;
+
+            inserted++;
+        }
+
+        _logger.LogInformation(
+            "Contact-only search {SearchId} inserted {Count} contacts",
+            message.SearchId,
+            inserted);
+        return inserted;
+    }
+
+    private async Task<bool> IsDuplicateContactAsync(Guid orgId, Guid? companyId, AiContactData contact, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(contact.LinkedInUrl)
+            && await _contacts.ExistsByLinkedInAsync(orgId, contact.LinkedInUrl.Trim(), cancellationToken))
+            return true;
+
         if (!string.IsNullOrWhiteSpace(contact.Email))
             return await _contacts.ExistsByEmailAsync(orgId, contact.Email.Trim(), cancellationToken);
 
