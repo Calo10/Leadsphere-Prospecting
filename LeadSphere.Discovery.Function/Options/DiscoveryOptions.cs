@@ -8,6 +8,7 @@ public sealed class DiscoveryOptions
     public int MaxSearchQueries { get; set; } = 4;
     public int MaxResultsPerSearchQuery { get; set; } = 20;
     public int MaxContactsPerCompany { get; set; } = 6;
+    public int MaxContactsPerSearch { get; set; } = 40;
     public int MaxLinkedInPeopleQueriesPerCompany { get; set; } = 1;
     public int MaxContactLinkedInQueriesPerCompany { get; set; } = 2;
     public bool EnableExternalProfileSearch { get; set; } = false;

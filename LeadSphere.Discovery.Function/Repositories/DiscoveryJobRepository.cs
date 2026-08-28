@@ -42,7 +42,8 @@ public sealed class DiscoveryJobRepository : IDiscoveryJobRepository
                 started_at = COALESCE(@StartedAt, started_at),
                 completed_at = COALESCE(@CompletedAt, completed_at),
                 updated_at = TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')
-            WHERE org_id = @OrgId AND id = @JobId;";
+            WHERE org_id = @OrgId AND id = @JobId
+              AND (status <> N'cancelled' OR @Status = N'cancelled');";
 
         await using var connection = _connectionFactory.CreateConnection();
         var command = new CommandDefinition(sql, new

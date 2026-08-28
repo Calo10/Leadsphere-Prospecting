@@ -123,21 +123,30 @@ public sealed class SignalEvaluationService : ISignalEvaluationService
 
         var previousRow = await _signals.GetLatestSnapshotAsync(job.Id, cancellationToken);
         var previous = Deserialize(previousRow);
-        var snapshotId = await StoreSnapshotAsync(job.Id, current, now, cancellationToken);
+        var changes = SignalChangeDetector.Detect(previous, current);
+        var isBaseline = previous is null;
 
-        var drafts = new List<SignalEventDraft>
+        // Evaluate as often as the timer/queue says; persist a snapshot only when it is the
+        // first capture or when something actually changed.
+        if (!isBaseline && changes.Count == 0)
         {
-            new()
-            {
-                EventType = SignalEventTypes.SnapshotCreated,
-                Severity = SignalSeverities.Info,
-                Title = "Snapshot Created",
-                Description = "Periodic snapshot captured for monitoring."
-            }
-        };
-        drafts.AddRange(SignalChangeDetector.Detect(previous, current));
+            _logger.LogInformation(
+                "Signal {SignalId} evaluated with no material change; snapshot not stored.",
+                job.Id);
+            await _signals.MarkEvaluatedAsync(job.OrgId, job.Id, SignalStatuses.Active, now, cancellationToken);
+            return;
+        }
 
-        await _signals.InsertEventsAsync(job.Id, snapshotId, drafts, now, cancellationToken);
+        var snapshotId = await StoreSnapshotAsync(job.Id, current, now, cancellationToken);
+        if (changes.Count > 0)
+        {
+            await _signals.InsertEventsAsync(job.Id, snapshotId, changes, now, cancellationToken);
+        }
+        else
+        {
+            _logger.LogInformation("Stored baseline snapshot for signal {SignalId}.", job.Id);
+        }
+
         await _signals.MarkEvaluatedAsync(job.OrgId, job.Id, SignalStatuses.Active, now, cancellationToken);
     }
 

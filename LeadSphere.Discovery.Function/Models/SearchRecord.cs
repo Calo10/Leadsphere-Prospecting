@@ -10,6 +10,8 @@ public sealed class SearchRecord
     public string ProfileDescription { get; set; } = string.Empty;
     public string? CriteriaJson { get; set; }
     public string Status { get; set; } = string.Empty;
+    public bool TargetCompanies { get; set; } = true;
+    public bool TargetContacts { get; set; } = true;
 
     public SearchCriteria? Criteria => string.IsNullOrWhiteSpace(CriteriaJson)
         ? null

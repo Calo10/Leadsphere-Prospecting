@@ -8,6 +8,7 @@ namespace LeadSphere.Discovery.Function.Repositories;
 public interface ISearchRepository
 {
     Task<SearchRecord?> GetByIdAsync(Guid orgId, Guid searchId, CancellationToken cancellationToken);
+    Task<bool> IsCancelledAsync(Guid orgId, Guid searchId, CancellationToken cancellationToken);
     Task UpdateStatusAsync(Guid orgId, Guid searchId, string status, string? errorMessage, DateTimeOffset? startedAt, DateTimeOffset? completedAt, CancellationToken cancellationToken);
     Task UpdateCountersAsync(Guid orgId, Guid searchId, int companiesFound, int contactsFound, CancellationToken cancellationToken);
 }
@@ -30,13 +31,29 @@ public sealed class SearchRepository : ISearchRepository
                 name AS Name,
                 profile_description AS ProfileDescription,
                 criteria_json AS CriteriaJson,
-                status AS Status
+                status AS Status,
+                target_companies AS TargetCompanies,
+                target_contacts AS TargetContacts
             FROM ls_searches
             WHERE org_id = @OrgId AND id = @SearchId;";
 
         await using var connection = _connectionFactory.CreateConnection();
         var command = new CommandDefinition(sql, new { OrgId = orgId, SearchId = searchId }, cancellationToken: cancellationToken);
         return await connection.QueryFirstOrDefaultAsync<SearchRecord>(command);
+    }
+
+    public async Task<bool> IsCancelledAsync(Guid orgId, Guid searchId, CancellationToken cancellationToken)
+    {
+        const string sql = @"
+            SELECT status
+            FROM ls_searches
+            WHERE org_id = @OrgId AND id = @SearchId;";
+
+        await using var connection = _connectionFactory.CreateConnection();
+        var command = new CommandDefinition(sql, new { OrgId = orgId, SearchId = searchId }, cancellationToken: cancellationToken);
+        var status = await connection.ExecuteScalarAsync<string?>(command);
+        return status is null
+            || string.Equals(status, JobStatuses.Cancelled, StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task UpdateStatusAsync(Guid orgId, Guid searchId, string status, string? errorMessage, DateTimeOffset? startedAt, DateTimeOffset? completedAt, CancellationToken cancellationToken)
@@ -49,7 +66,8 @@ public sealed class SearchRepository : ISearchRepository
                 started_at = COALESCE(@StartedAt, started_at),
                 completed_at = COALESCE(@CompletedAt, completed_at),
                 updated_at = TODATETIMEOFFSET(SYSUTCDATETIME(), '+00:00')
-            WHERE org_id = @OrgId AND id = @SearchId;";
+            WHERE org_id = @OrgId AND id = @SearchId
+              AND (status <> N'cancelled' OR @Status = N'cancelled');";
 
         await using var connection = _connectionFactory.CreateConnection();
         var command = new CommandDefinition(sql, new
