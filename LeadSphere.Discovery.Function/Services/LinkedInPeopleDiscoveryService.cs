@@ -14,6 +14,11 @@ public interface ILinkedInPeopleDiscoveryService
         string? domain,
         string? linkedInCompanyUrl,
         CancellationToken cancellationToken);
+    Task<IReadOnlyList<AiContactData>> DiscoverMatchingPeopleAsync(
+        SearchRecord search,
+        WebSearchContext? context,
+        int maxContacts,
+        CancellationToken cancellationToken);
 }
 
 public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoveryService
@@ -73,18 +78,73 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
         return ContactQualityFilter.MergeAndRank(contacts, [], linkedInCompanyUrl).Take(targetCount).ToList();
     }
 
+    public async Task<IReadOnlyList<AiContactData>> DiscoverMatchingPeopleAsync(
+        SearchRecord search,
+        WebSearchContext? context,
+        int maxContacts,
+        CancellationToken cancellationToken)
+    {
+        var contacts = new List<AiContactData>();
+        var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var intent = SearchIntentResolver.Resolve(search);
+        var profile = TrimForQuery(search.ProfileDescription);
+        var location = intent.Location;
+        var industry = intent.Industry;
+
+        var queries = new List<string>();
+        if (!string.IsNullOrWhiteSpace(profile))
+            queries.Add($"site:linkedin.com/in {profile} {location}".Trim());
+        if (!string.IsNullOrWhiteSpace(industry))
+            queries.Add($"site:linkedin.com/in \"{industry}\" {location}".Trim());
+        if (!string.IsNullOrWhiteSpace(profile))
+            queries.Add($"{profile} linkedin {location}".Trim());
+        if (!string.IsNullOrWhiteSpace(industry) && !string.IsNullOrWhiteSpace(location))
+            queries.Add($"site:linkedin.com/in {industry} {location} profile");
+
+        foreach (var query in queries
+            .Select(q => q.Trim())
+            .Where(q => q.Length >= 8)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(1, _options.MaxSearchQueries)))
+        {
+            await CollectFromQueryAsync(
+                query,
+                linkedInCompanyUrl: null,
+                contacts,
+                seenUrls,
+                maxResults: 15,
+                cancellationToken,
+                context,
+                requireDecisionMaker: false);
+        }
+
+        _logger.LogInformation(
+            "Discovered {Count} profile-matching people for search {SearchId}",
+            contacts.Count,
+            search.Id);
+        return contacts.Take(Math.Max(1, maxContacts)).ToList();
+    }
+
+    private static string TrimForQuery(string? profile)
+    {
+        profile = (profile ?? string.Empty).Trim();
+        return profile.Length > 80 ? profile[..80] : profile;
+    }
+
     private async Task CollectFromQueryAsync(
         string query,
         string? linkedInCompanyUrl,
         List<AiContactData> contacts,
         HashSet<string> seenUrls,
         int maxResults,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        WebSearchContext? context = null,
+        bool requireDecisionMaker = true)
     {
         try
         {
-            var results = await _webSearch.SearchAsync(query, maxResults, context: null, cancellationToken);
-            foreach (var contact in ParseResults(results, linkedInCompanyUrl))
+            var results = await _webSearch.SearchAsync(query, maxResults, context, cancellationToken);
+            foreach (var contact in ParseResults(results, linkedInCompanyUrl, requireDecisionMaker))
             {
                 if (string.IsNullOrWhiteSpace(contact.LinkedInUrl) || !seenUrls.Add(contact.LinkedInUrl))
                     continue;
@@ -98,7 +158,10 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
         }
     }
 
-    private static IEnumerable<AiContactData> ParseResults(IReadOnlyList<WebSearchResult> results, string? linkedInCompanyUrl)
+    private static IEnumerable<AiContactData> ParseResults(
+        IReadOnlyList<WebSearchResult> results,
+        string? linkedInCompanyUrl,
+        bool requireDecisionMaker = true)
     {
         foreach (var result in results)
         {
@@ -112,10 +175,16 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
             var title = result.Title.Trim();
 
             var (fullName, jobTitle) = ParseLinkedInTitle(title);
+            if (string.IsNullOrWhiteSpace(fullName) && !requireDecisionMaker)
+            {
+                var cleaned = title.Replace("| LinkedIn", "", StringComparison.OrdinalIgnoreCase).Trim();
+                if (IsValidParsedName(cleaned) && !cleaned.Contains(" – ", StringComparison.Ordinal) && !cleaned.Contains(" - ", StringComparison.Ordinal))
+                    fullName = cleaned;
+            }
             if (string.IsNullOrWhiteSpace(fullName))
                 continue;
 
-            if (!ContactQualityFilter.IsDecisionMakerTitle(jobTitle))
+            if (requireDecisionMaker && !ContactQualityFilter.IsDecisionMakerTitle(jobTitle))
                 continue;
 
             var parts = fullName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
