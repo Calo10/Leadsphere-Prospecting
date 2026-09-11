@@ -5,4 +5,5 @@ public sealed class DiscoveryJobMessage
     public Guid JobId { get; set; }
     public Guid SearchId { get; set; }
     public Guid OrgId { get; set; }
+    public bool IsPretest { get; set; }
 }

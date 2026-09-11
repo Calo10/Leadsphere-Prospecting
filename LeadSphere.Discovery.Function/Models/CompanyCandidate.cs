@@ -59,4 +59,6 @@ public sealed class AiContactData
     public string? Phone { get; set; }
     public string? JobTitle { get; set; }
     public string? LinkedInUrl { get; set; }
+    public double? FitScore { get; set; }
+    public string? AiSummary { get; set; }
 }

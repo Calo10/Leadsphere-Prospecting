@@ -78,19 +78,30 @@ internal static class MetadataBuilder
         return payload.Count == 0 ? null : ValueNormalizer.SerializeMetadata(payload);
     }
 
-    public static string? ForContact(EmailValidationResult? emailValidation)
+    public static string? ForContact(
+        EmailValidationResult? emailValidation,
+        double? fitScore = null,
+        string? aiSummary = null)
     {
-        if (emailValidation is null)
-            return null;
+        var payload = new Dictionary<string, object?>();
 
-        return ValueNormalizer.SerializeMetadata(new
+        if (emailValidation is not null)
         {
-            emailValidation = new
+            payload["emailValidation"] = new
             {
                 status = emailValidation.Status,
                 isValidFormat = emailValidation.IsValidFormat,
                 hasMxRecord = emailValidation.HasMxRecord
-            }
-        });
+            };
+        }
+
+        if (fitScore.HasValue)
+            payload["fitScore"] = fitScore.Value;
+
+        var summary = ValueNormalizer.Text(aiSummary);
+        if (summary is not null)
+            payload["aiSummary"] = summary;
+
+        return payload.Count == 0 ? null : ValueNormalizer.SerializeMetadata(payload);
     }
 }

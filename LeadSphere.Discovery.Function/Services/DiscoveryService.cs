@@ -83,7 +83,14 @@ public sealed class DiscoveryService : IDiscoveryService
             return;
 
         await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Running, null, startedAt, null, cancellationToken);
-        await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Running, null, startedAt, null, cancellationToken);
+        await _searches.UpdateStatusAsync(
+            message.OrgId,
+            message.SearchId,
+            JobStatuses.Running,
+            null,
+            message.IsPretest ? null : startedAt,
+            null,
+            cancellationToken);
 
         if (await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken))
             return;
@@ -107,14 +114,30 @@ public sealed class DiscoveryService : IDiscoveryService
             };
 
             var locationHint = search.Criteria?.Location;
+            var maxResults = message.IsPretest
+                ? Math.Max(1, _options.PretestMaxResults)
+                : _options.MaxCompaniesPerSearch;
+            var maxContacts = message.IsPretest
+                ? Math.Max(1, _options.PretestMaxResults)
+                : _options.MaxContactsPerSearch;
+            var maxQueries = message.IsPretest ? 1 : _options.MaxSearchQueries;
+            var maxSerpResults = message.IsPretest
+                ? Math.Min(8, _options.MaxResultsPerSearchQuery)
+                : _options.MaxResultsPerSearchQuery;
 
             if (!search.TargetCompanies)
             {
-                contactsInserted = await DiscoverContactsOnlyAsync(message, search, searchContext, locationHint, cancellationToken);
+                contactsInserted = await DiscoverContactsOnlyAsync(
+                    message,
+                    search,
+                    searchContext,
+                    locationHint,
+                    maxContacts,
+                    cancellationToken);
             }
             else
             {
-            var queries = WebSearchQueryBuilder.BuildQueries(search, _options.MaxSearchQueries);
+            var queries = WebSearchQueryBuilder.BuildQueries(search, maxQueries);
             _logger.LogInformation(
                 "Built {QueryCount} web search queries for search {SearchId}: {Queries}",
                 queries.Count,
@@ -130,7 +153,7 @@ public sealed class DiscoveryService : IDiscoveryService
 
                 var results = await _webSearch.SearchAsync(
                     query,
-                    _options.MaxResultsPerSearchQuery,
+                    maxSerpResults,
                     searchContext,
                     cancellationToken);
                 allResults.AddRange(results);
@@ -138,7 +161,7 @@ public sealed class DiscoveryService : IDiscoveryService
 
             var uniqueResults = DomainNormalizer.DeduplicateByDomain(allResults);
             var relevantResults = SearchResultRelevanceFilter.FilterAndRank(search, uniqueResults, _options.MinIndustryRelevanceScore)
-                .Take(_options.MaxCompaniesPerSearch)
+                .Take(maxResults)
                 .ToList();
 
             _logger.LogInformation(
@@ -309,21 +332,27 @@ public sealed class DiscoveryService : IDiscoveryService
                     extraction.Company.Name,
                     extraction.Company.Domain,
                     contactCount);
+
+                if (companiesInserted >= maxResults)
+                    break;
             }
             }
 
             if (await TryAbortIfCancelledAsync(message, companiesInserted, contactsInserted, cancellationToken))
                 return;
 
-            var completedAt = DateTimeOffset.UtcNow;
-            await _discoveryJobs.UpdateCountersAsync(message.OrgId, message.JobId, companiesInserted, contactsInserted, cancellationToken);
-            await _searches.UpdateCountersAsync(message.OrgId, message.SearchId, companiesInserted, contactsInserted, cancellationToken);
-            await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Completed, null, null, completedAt, cancellationToken);
-            await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Completed, null, null, completedAt, cancellationToken);
+            await FinishJobAsync(
+                message,
+                failed: false,
+                errorMessage: null,
+                companiesInserted,
+                contactsInserted,
+                cancellationToken);
 
             _logger.LogInformation(
-                "Discovery job {JobId} completed. Companies={Companies} Contacts={Contacts}",
+                "Discovery job {JobId} completed. Pretest={Pretest} Companies={Companies} Contacts={Contacts}",
                 message.JobId,
+                message.IsPretest,
                 companiesInserted,
                 contactsInserted);
         }
@@ -341,26 +370,33 @@ public sealed class DiscoveryService : IDiscoveryService
             // Results already saved: complete the search so the UI is not "Failed" with companies/contacts.
             if (companiesInserted > 0 || contactsInserted > 0)
             {
-                var completedAt = DateTimeOffset.UtcNow;
-                await _discoveryJobs.UpdateCountersAsync(message.OrgId, message.JobId, companiesInserted, contactsInserted, cancellationToken);
-                await _searches.UpdateCountersAsync(message.OrgId, message.SearchId, companiesInserted, contactsInserted, cancellationToken);
-                await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Completed, null, null, completedAt, cancellationToken);
-                await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Completed, null, null, completedAt, cancellationToken);
+                await FinishJobAsync(
+                    message,
+                    failed: false,
+                    errorMessage: null,
+                    companiesInserted,
+                    contactsInserted,
+                    cancellationToken);
                 _logger.LogWarning(
                     ex,
-                    "Discovery job {JobId} stopped after saving {Companies} companies and {Contacts} contacts; marking completed",
+                    "Discovery job {JobId} stopped after saving {Companies} companies and {Contacts} contacts; marking {Status}",
                     message.JobId,
                     companiesInserted,
-                    contactsInserted);
+                    contactsInserted,
+                    message.IsPretest ? JobStatuses.Pending : JobStatuses.Completed);
                 return;
             }
 
             var errorMessage = ex.Message.Length > 2000 ? ex.Message[..2000] : ex.Message;
-            var failedAt = DateTimeOffset.UtcNow;
-
-            await _discoveryJobs.UpdateStatusAsync(message.OrgId, message.JobId, JobStatuses.Failed, errorMessage, null, failedAt, cancellationToken);
-            await _searches.UpdateStatusAsync(message.OrgId, message.SearchId, JobStatuses.Failed, errorMessage, null, failedAt, cancellationToken);
-            throw;
+            await FinishJobAsync(
+                message,
+                failed: true,
+                errorMessage,
+                companiesInserted,
+                contactsInserted,
+                cancellationToken);
+            if (!message.IsPretest)
+                throw;
         }
     }
 
@@ -396,25 +432,90 @@ public sealed class DiscoveryService : IDiscoveryService
         return true;
     }
 
+    private async Task FinishJobAsync(
+        DiscoveryJobMessage message,
+        bool failed,
+        string? errorMessage,
+        int companiesInserted,
+        int contactsInserted,
+        CancellationToken cancellationToken)
+    {
+        var finishedAt = DateTimeOffset.UtcNow;
+        await _discoveryJobs.UpdateCountersAsync(message.OrgId, message.JobId, companiesInserted, contactsInserted, cancellationToken);
+        await _searches.UpdateCountersAsync(message.OrgId, message.SearchId, companiesInserted, contactsInserted, cancellationToken);
+
+        var jobStatus = failed ? JobStatuses.Failed : JobStatuses.Completed;
+        await _discoveryJobs.UpdateStatusAsync(
+            message.OrgId,
+            message.JobId,
+            jobStatus,
+            errorMessage,
+            null,
+            finishedAt,
+            cancellationToken);
+
+        if (message.IsPretest)
+        {
+            await _searches.UpdateStatusAsync(
+                message.OrgId,
+                message.SearchId,
+                JobStatuses.Pending,
+                failed ? errorMessage : null,
+                null,
+                null,
+                cancellationToken);
+            return;
+        }
+
+        await _searches.UpdateStatusAsync(
+            message.OrgId,
+            message.SearchId,
+            jobStatus,
+            errorMessage,
+            null,
+            finishedAt,
+            cancellationToken);
+    }
+
     private async Task<int> DiscoverContactsOnlyAsync(
         DiscoveryJobMessage message,
         SearchRecord search,
         WebSearchContext searchContext,
         string? locationHint,
+        int maxContacts,
         CancellationToken cancellationToken)
     {
-        var people = await _linkedInPeople.DiscoverMatchingPeopleAsync(
+        var people = (await _linkedInPeople.DiscoverMatchingPeopleAsync(
             search,
             searchContext,
-            _options.MaxContactsPerSearch,
-            cancellationToken);
+            Math.Max(maxContacts, message.IsPretest ? Math.Min(10, maxContacts * 3) : maxContacts),
+            cancellationToken)).ToList();
+
+        await _openAi.ScoreContactsAsync(search, people, cancellationToken);
+
+        var ranked = people
+            .OrderByDescending(c => c.FitScore ?? 0)
+            .ToList();
 
         var inserted = 0;
-        foreach (var contact in people)
+        foreach (var contact in ranked)
         {
+            if (inserted >= maxContacts)
+                break;
+
             cancellationToken.ThrowIfCancellationRequested();
             if (await TryAbortIfCancelledAsync(message, 0, inserted, cancellationToken))
                 return inserted;
+
+            if (contact.FitScore is { } score && score < _options.MinContactFitScore)
+            {
+                _logger.LogDebug(
+                    "Skipping contact {Name} — fit score {FitScore} below minimum {MinFit}",
+                    contact.FullName,
+                    contact.FitScore,
+                    _options.MinContactFitScore);
+                continue;
+            }
 
             if (await IsDuplicateContactAsync(message.OrgId, companyId: null, contact, cancellationToken))
                 continue;
