@@ -62,6 +62,7 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
             }
             Rules:
             - fitScore must reflect how well the company matches the search industry/profile (0-1). Use scores below 0.4 for poor matches.
+            - If the search profile includes USER FEEDBACK or THUMBS UP / THUMBS DOWN examples, those are the strongest signal. Prefer companies similar to thumbs up and reject ones similar to thumbs down, even if they loosely match the original description.
             - NEVER invent contacts from generic inboxes (hello@, info@, contact@, support@, sales@, admin@).
             - Only include contacts that are real named individuals with decision-maker titles (CEO, Founder, VP, Director, Head of, CRO, General Manager, etc.).
             - Each contact MUST have a full name and either a personal email, phone, or LinkedIn profile URL.
@@ -80,13 +81,14 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
 
         var userPrompt = new StringBuilder();
         userPrompt.AppendLine("Search profile:");
-        userPrompt.AppendLine(search.ProfileDescription);
+        userPrompt.AppendLine(SearchFeedbackSignals.OriginalProfile(search.ProfileDescription));
         if (search.Criteria is not null)
         {
             userPrompt.AppendLine($"Industry: {search.Criteria.Industry}");
             userPrompt.AppendLine($"Location: {search.Criteria.Location}");
             userPrompt.AppendLine($"Company size: {search.Criteria.EmployeeMin}-{search.Criteria.EmployeeMax}");
         }
+        AppendFeedback(userPrompt, search);
 
         userPrompt.AppendLine();
         userPrompt.AppendLine("Scraped candidate:");
@@ -170,18 +172,20 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
             Rules:
             - fitScore must reflect how well the person matches the search industry/profile and desired role (0-1).
             - Use scores below 0.4 for poor matches (wrong industry, junior/unrelated title, or weak evidence).
+            - If the search profile includes USER FEEDBACK or THUMBS UP / THUMBS DOWN examples, those are the strongest signal. Prefer people similar to thumbs up and reject ones similar to thumbs down, even if they loosely match the original description.
             - Score every contact by its 0-based index. Do not skip indexes.
             - aiSummary must be one short sentence explaining the score.
             """;
 
         var userPrompt = new StringBuilder();
         userPrompt.AppendLine("Search profile:");
-        userPrompt.AppendLine(search.ProfileDescription);
+        userPrompt.AppendLine(SearchFeedbackSignals.OriginalProfile(search.ProfileDescription));
         if (search.Criteria is not null)
         {
             userPrompt.AppendLine($"Industry: {search.Criteria.Industry}");
             userPrompt.AppendLine($"Location: {search.Criteria.Location}");
         }
+        AppendFeedback(userPrompt, search);
 
         userPrompt.AppendLine();
         userPrompt.AppendLine("People to score:");
@@ -218,6 +222,14 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
         {
             _logger.LogWarning(ex, "Failed to score {Count} contacts for search {SearchId}", batch.Count, search.Id);
         }
+    }
+
+    private static void AppendFeedback(StringBuilder userPrompt, SearchRecord search)
+    {
+        var signals = search.FeedbackSignals;
+        if (signals is null)
+            return;
+        userPrompt.Append(signals.ToPromptBlock());
     }
 
     private async Task<string?> CompleteJsonAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken)

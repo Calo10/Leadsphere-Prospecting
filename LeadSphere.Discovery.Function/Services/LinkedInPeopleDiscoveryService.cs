@@ -87,7 +87,7 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
         var contacts = new List<AiContactData>();
         var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var intent = SearchIntentResolver.Resolve(search);
-        var profile = TrimForQuery(search.ProfileDescription);
+        var profile = TrimForQuery(intent.Profile);
         var location = intent.Location;
         var industry = intent.Industry;
 
