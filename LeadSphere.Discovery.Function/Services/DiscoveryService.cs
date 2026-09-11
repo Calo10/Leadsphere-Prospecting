@@ -106,6 +106,14 @@ public sealed class DiscoveryService : IDiscoveryService
             }
 
             var searchIntent = SearchIntentResolver.Resolve(search);
+            var feedback = search.FeedbackSignals;
+            _logger.LogInformation(
+                "Search {SearchId} feedback signals: notes={HasNotes} thumbsUp={ThumbsUp} thumbsDown={ThumbsDown}",
+                message.SearchId,
+                feedback?.HasNotes == true,
+                feedback?.ThumbsUp.Count ?? 0,
+                feedback?.ThumbsDown.Count ?? 0);
+
             var searchContext = new WebSearchContext
             {
                 Location = searchIntent.SerpApiLocation,
@@ -180,6 +188,15 @@ public sealed class DiscoveryService : IDiscoveryService
                 if (string.IsNullOrWhiteSpace(domain))
                     continue;
 
+                if (feedback?.RejectsCompany(domain, result.Title) == true)
+                {
+                    _logger.LogInformation(
+                        "Skipping company {Domain} — matches a thumbs-down example for search {SearchId}",
+                        domain,
+                        message.SearchId);
+                    continue;
+                }
+
                 if (await _companies.ExistsByDomainAsync(message.OrgId, domain, cancellationToken))
                 {
                     _logger.LogDebug("Skipping duplicate domain {Domain} for org {OrgId}", domain, message.OrgId);
@@ -208,6 +225,16 @@ public sealed class DiscoveryService : IDiscoveryService
                 if (extraction.Company is null || string.IsNullOrWhiteSpace(extraction.Company.Name))
                 {
                     _logger.LogDebug("OpenAI returned no usable company for domain {Domain}", domain);
+                    continue;
+                }
+
+                if (feedback?.RejectsCompany(extraction.Company.Domain ?? domain, extraction.Company.Name) == true)
+                {
+                    _logger.LogInformation(
+                        "Skipping extracted company {Name} ({Domain}) — matches a thumbs-down example for search {SearchId}",
+                        extraction.Company.Name,
+                        extraction.Company.Domain ?? domain,
+                        message.SearchId);
                     continue;
                 }
 
@@ -299,6 +326,15 @@ public sealed class DiscoveryService : IDiscoveryService
 
                 foreach (var contact in contactsToInsert.Take(_options.MaxContactsPerCompany))
                 {
+                    if (feedback?.RejectsContact(contact.Email, contact.LinkedInUrl, contact.FullName) == true)
+                    {
+                        _logger.LogInformation(
+                            "Skipping contact {Name} — matches a thumbs-down example for search {SearchId}",
+                            contact.FullName,
+                            message.SearchId);
+                        continue;
+                    }
+
                     if (await IsDuplicateContactAsync(message.OrgId, companyId, contact, cancellationToken))
                         continue;
 
@@ -506,6 +542,15 @@ public sealed class DiscoveryService : IDiscoveryService
             cancellationToken.ThrowIfCancellationRequested();
             if (await TryAbortIfCancelledAsync(message, 0, inserted, cancellationToken))
                 return inserted;
+
+            if (search.FeedbackSignals?.RejectsContact(contact.Email, contact.LinkedInUrl, contact.FullName) == true)
+            {
+                _logger.LogInformation(
+                    "Skipping contact {Name} — matches a thumbs-down example for search {SearchId}",
+                    contact.FullName,
+                    message.SearchId);
+                continue;
+            }
 
             if (contact.FitScore is { } score && score < _options.MinContactFitScore)
             {

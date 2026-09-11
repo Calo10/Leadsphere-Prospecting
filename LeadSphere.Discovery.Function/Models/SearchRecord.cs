@@ -8,6 +8,8 @@ public sealed class SearchRecord
     public Guid OrgId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string ProfileDescription { get; set; } = string.Empty;
+    public string? Feedback { get; set; }
+    public string? FeedbackSignalsJson { get; set; }
     public string? CriteriaJson { get; set; }
     public string Status { get; set; } = string.Empty;
     public bool TargetCompanies { get; set; } = true;
@@ -16,6 +18,8 @@ public sealed class SearchRecord
     public SearchCriteria? Criteria => string.IsNullOrWhiteSpace(CriteriaJson)
         ? null
         : JsonSerializer.Deserialize<SearchCriteria>(CriteriaJson, JsonDefaults.Web);
+
+    public SearchFeedbackSignals? FeedbackSignals => SearchFeedbackSignals.Resolve(this);
 }
 
 public sealed class SearchCriteria

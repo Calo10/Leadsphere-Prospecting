@@ -30,6 +30,8 @@ public sealed class SearchRepository : ISearchRepository
                 org_id AS OrgId,
                 name AS Name,
                 profile_description AS ProfileDescription,
+                feedback AS Feedback,
+                feedback_signals_json AS FeedbackSignalsJson,
                 criteria_json AS CriteriaJson,
                 status AS Status,
                 target_companies AS TargetCompanies,
