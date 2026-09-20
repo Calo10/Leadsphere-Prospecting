@@ -100,7 +100,7 @@ public sealed class ContactRepository : IContactRepository
             row.Phone,
             row.JobTitle,
             row.LinkedInUrl,
-            MetadataJson = MetadataBuilder.ForContact(emailValidation)
+            MetadataJson = MetadataBuilder.ForContact(emailValidation, contact.FitScore, contact.AiSummary)
         }, cancellationToken: cancellationToken);
 
         await connection.ExecuteAsync(command);

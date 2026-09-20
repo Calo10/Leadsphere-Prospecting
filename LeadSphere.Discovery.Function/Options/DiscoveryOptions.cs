@@ -25,6 +25,8 @@ public sealed class DiscoveryOptions
     public int MaxWebSearchCallsPerSearch { get; set; } = 55;
     public double MinIndustryRelevanceScore { get; set; } = 0.20;
     public double MinCompanyFitScore { get; set; } = 0.45;
+    public double MinContactFitScore { get; set; } = 0.45;
+    public int PretestMaxResults { get; set; } = 3;
 }
 
 public sealed class WebSearchOptions

@@ -52,13 +52,20 @@ internal static class SearchIntentResolver
     public static SearchIntent Resolve(SearchRecord search)
     {
         var criteria = search.Criteria;
-        var profile = search.ProfileDescription.Trim();
+        var signals = search.FeedbackSignals;
+        var profile = SearchFeedbackSignals.OriginalProfile(search.ProfileDescription);
+        var notes = signals?.Notes;
+        var keywordSource = string.Join(' ', new[] { profile, notes }.Where(v => !string.IsNullOrWhiteSpace(v)));
         var industry = FirstNonEmpty(criteria?.Industry, search.Name) ?? "companies";
-        var location = FirstNonEmpty(criteria?.Location, ExtractLocationFromText(profile), ExtractLocationFromText(industry));
+        var location = FirstNonEmpty(
+            criteria?.Location,
+            ExtractLocationFromText(notes),
+            ExtractLocationFromText(profile),
+            ExtractLocationFromText(industry));
 
         var industryKeywords = Tokenize(industry).ToList();
-        var profileKeywords = ExtractProfileKeywords(profile);
-        var businessTypeKeywords = DetectBusinessTypeKeywords(industry, profile);
+        var profileKeywords = ExtractProfileKeywords(keywordSource);
+        var businessTypeKeywords = DetectBusinessTypeKeywords(industry, keywordSource);
 
         return new SearchIntent
         {
@@ -66,8 +73,8 @@ internal static class SearchIntentResolver
             Profile = profile,
             Location = location,
             SerpApiLocation = ResolveSerpApiLocation(location),
-            CountryCode = ResolveCountryCode(location, profile),
-            Language = DetectLanguage(industry, profile),
+            CountryCode = ResolveCountryCode(location, keywordSource),
+            Language = DetectLanguage(industry, keywordSource),
             IndustryKeywords = industryKeywords,
             ProfileKeywords = profileKeywords,
             BusinessTypeKeywords = businessTypeKeywords
@@ -201,7 +208,8 @@ internal static class SearchIntentResolver
             .Select(m => m.Value)
             .Where(w => w is not (
                 "empresas" or "empresa" or "that" or "with" or "from" or "this" or "have" or
-                "para" or "como" or "todo" or "tipo" or "dentro" or "muevan" or "tipos"))
+                "para" or "como" or "todo" or "tipo" or "dentro" or "muevan" or "tipos" or
+                "thumbs" or "feedback" or "prefer" or "reject" or "follow" or "notes"))
             .Distinct()
             .Take(12)
             .ToList();
