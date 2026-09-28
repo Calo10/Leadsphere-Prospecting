@@ -28,6 +28,8 @@ public sealed class SearchCriteria
     public string? Industry { get; set; }
     public int? EmployeeMin { get; set; }
     public int? EmployeeMax { get; set; }
+    public string? Tags { get; set; }
+    public string? Notes { get; set; }
 }
 
 public static class JsonDefaults

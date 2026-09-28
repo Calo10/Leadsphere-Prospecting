@@ -27,6 +27,7 @@ public sealed class DiscoveryService : IDiscoveryService
     private readonly IContactDataEnrichmentService _contactData;
     private readonly ICompanyMarketDataService _marketData;
     private readonly IOpenAiExtractionService _openAi;
+    private readonly ILocationResolutionService _locations;
     private readonly DiscoveryOptions _options;
     private readonly ILogger<DiscoveryService> _logger;
 
@@ -43,6 +44,7 @@ public sealed class DiscoveryService : IDiscoveryService
         IContactDataEnrichmentService contactData,
         ICompanyMarketDataService marketData,
         IOpenAiExtractionService openAi,
+        ILocationResolutionService locations,
         IOptions<DiscoveryOptions> options,
         ILogger<DiscoveryService> logger)
     {
@@ -58,6 +60,7 @@ public sealed class DiscoveryService : IDiscoveryService
         _contactData = contactData;
         _marketData = marketData;
         _openAi = openAi;
+        _locations = locations;
         _options = options.Value;
         _logger = logger;
     }
@@ -105,7 +108,8 @@ public sealed class DiscoveryService : IDiscoveryService
                 return;
             }
 
-            var searchIntent = SearchIntentResolver.Resolve(search);
+            var resolvedLocation = await _locations.ResolveAsync(SearchIntentResolver.RawLocation(search), cancellationToken);
+            var searchIntent = SearchIntentResolver.Resolve(search, resolvedLocation);
             var feedback = search.FeedbackSignals;
             _logger.LogInformation(
                 "Search {SearchId} feedback signals: notes={HasNotes} thumbsUp={ThumbsUp} thumbsDown={ThumbsDown}",
@@ -121,7 +125,7 @@ public sealed class DiscoveryService : IDiscoveryService
                 Language = searchIntent.Language
             };
 
-            var locationHint = search.Criteria?.Location;
+            var locationHint = searchIntent.Location ?? search.Criteria?.Location;
             var maxResults = message.IsPretest
                 ? Math.Max(1, _options.PretestMaxResults)
                 : _options.MaxCompaniesPerSearch;
@@ -235,6 +239,21 @@ public sealed class DiscoveryService : IDiscoveryService
                         extraction.Company.Name,
                         extraction.Company.Domain ?? domain,
                         message.SearchId);
+                    continue;
+                }
+
+                if (!LocationConstraint.Matches(
+                        searchIntent.ResolvedLocation,
+                        extraction.Company.Address ?? candidate.Address,
+                        extraction.Company.Location ?? candidate.Location,
+                        result.Title,
+                        result.Snippet))
+                {
+                    _logger.LogInformation(
+                        "Skipping company {Name} ({Domain}) — outside search location {Location}",
+                        extraction.Company.Name,
+                        domain,
+                        searchIntent.Location);
                     continue;
                 }
 
