@@ -50,13 +50,13 @@ public sealed class CompanyRepository : ICompanyRepository
 
         const string sql = @"
             INSERT INTO ls_companies (
-                org_id, search_id, name, domain, website, industry, employee_count, location, description,
+                org_id, search_id, name, domain, website, industry, employee_count, location, address, description,
                 logo_url, linkedin_url, twitter_url, facebook_url, instagram_url, crunchbase_url,
                 ticker, stock_price, stock_change_percent, stock_currency, stock_as_of,
                 metadata_json)
             OUTPUT INSERTED.id
             VALUES (
-                @OrgId, @SearchId, @Name, @Domain, @Website, @Industry, @EmployeeCount, @Location, @Description,
+                @OrgId, @SearchId, @Name, @Domain, @Website, @Industry, @EmployeeCount, @Location, @Address, @Description,
                 @LogoUrl, @LinkedInUrl, @TwitterUrl, @FacebookUrl, @InstagramUrl, @CrunchbaseUrl,
                 @Ticker, @StockPrice, @StockChangePercent, @StockCurrency, @StockAsOf,
                 @MetadataJson);";
@@ -72,6 +72,7 @@ public sealed class CompanyRepository : ICompanyRepository
             row.Industry,
             row.EmployeeCount,
             row.Location,
+            row.Address,
             row.Description,
             row.LogoUrl,
             row.LinkedInUrl,

@@ -46,15 +46,18 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
     ];
 
     private readonly IWebSearchService _webSearch;
+    private readonly ILocationResolutionService _locations;
     private readonly DiscoveryOptions _options;
     private readonly ILogger<LinkedInPeopleDiscoveryService> _logger;
 
     public LinkedInPeopleDiscoveryService(
         IWebSearchService webSearch,
+        ILocationResolutionService locations,
         IOptions<DiscoveryOptions> options,
         ILogger<LinkedInPeopleDiscoveryService> logger)
     {
         _webSearch = webSearch;
+        _locations = locations;
         _options = options.Value;
         _logger = logger;
     }
@@ -86,7 +89,9 @@ public sealed class LinkedInPeopleDiscoveryService : ILinkedInPeopleDiscoverySer
     {
         var contacts = new List<AiContactData>();
         var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var intent = SearchIntentResolver.Resolve(search);
+        var intent = SearchIntentResolver.Resolve(
+            search,
+            await _locations.ResolveAsync(SearchIntentResolver.RawLocation(search), cancellationToken));
         var profile = TrimForQuery(intent.Profile);
         var location = intent.Location;
         var industry = intent.Industry;

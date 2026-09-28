@@ -1,5 +1,6 @@
 using LeadSphere.Discovery.Function.Infrastructure;
 using LeadSphere.Discovery.Function.Models;
+using LeadSphere.Discovery.Function.Services;
 
 namespace LeadSphere.Discovery.Function.Repositories;
 
@@ -57,6 +58,7 @@ internal static class PersistableCompanyMapper
             Industry: ValueNormalizer.Text(company.Industry),
             EmployeeCount: company.EmployeeCount is > 0 ? company.EmployeeCount : null,
             Location: ValueNormalizer.Text(company.Location),
+            Address: AddressExtractor.Normalize(company.Address),
             Description: ValueNormalizer.Text(company.Description),
             LogoUrl: ValueNormalizer.Url(enrichment.LogoUrl),
             LinkedInUrl: ValueNormalizer.Url(enrichment.LinkedInUrl),
@@ -80,6 +82,7 @@ internal sealed record PersistableCompany(
     string? Industry,
     int? EmployeeCount,
     string? Location,
+    string? Address,
     string? Description,
     string? LogoUrl,
     string? LinkedInUrl,

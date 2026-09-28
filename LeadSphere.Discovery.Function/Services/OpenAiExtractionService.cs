@@ -17,15 +17,18 @@ public interface IOpenAiExtractionService
 public sealed class OpenAiExtractionService : IOpenAiExtractionService
 {
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ILocationResolutionService _locations;
     private readonly OpenAiOptions _options;
     private readonly ILogger<OpenAiExtractionService> _logger;
 
     public OpenAiExtractionService(
         IHttpClientFactory httpClientFactory,
+        ILocationResolutionService locations,
         IOptions<OpenAiOptions> options,
         ILogger<OpenAiExtractionService> logger)
     {
         _httpClientFactory = httpClientFactory;
+        _locations = locations;
         _options = options.Value;
         _logger = logger;
     }
@@ -41,7 +44,8 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
                 "website": "string|null",
                 "domain": "string|null",
                 "industry": "string|null",
-                "location": "string|null",
+                "location": "city and region only, e.g. Miami, FL",
+                "address": "full street address if visible on the site, e.g. 1200 Brickell Ave, Suite 400, Miami, FL 33131",
                 "description": "string|null",
                 "employeeCount": number|null
               },
@@ -61,7 +65,7 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
               "aiSummary": "string"
             }
             Rules:
-            - fitScore must reflect how well the company matches the search industry/profile (0-1). Use scores below 0.4 for poor matches.
+            - fitScore must reflect how well the company matches the search industry/profile AND the geographic target (0-1). Use scores below 0.4 for poor matches or companies clearly outside the requested area.
             - If the search profile includes USER FEEDBACK or THUMBS UP / THUMBS DOWN examples, those are the strongest signal. Prefer companies similar to thumbs up and reject ones similar to thumbs down, even if they loosely match the original description.
             - NEVER invent contacts from generic inboxes (hello@, info@, contact@, support@, sales@, admin@).
             - Only include contacts that are real named individuals with decision-maker titles (CEO, Founder, VP, Director, Head of, CRO, General Manager, etc.).
@@ -77,6 +81,9 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
             - If no real decision-makers are found, return an empty contacts array.
             - Omit fields you do not know instead of returning null or empty strings.
             - Phone numbers should be digits with optional country code when known.
+            - location is city/region only. Never put a street address in location.
+            - address must be a real street address copied from the website (number + street, plus city when available). Do not invent it. Do not copy the search location into address. Omit address if the page has no street address.
+            - Honor the geographic constraint exactly. A city/neighborhood target means that place, not the whole state. A state target means the whole state.
             """;
 
         var userPrompt = new StringBuilder();
@@ -88,6 +95,7 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
             userPrompt.AppendLine($"Location: {search.Criteria.Location}");
             userPrompt.AppendLine($"Company size: {search.Criteria.EmployeeMin}-{search.Criteria.EmployeeMax}");
         }
+        await AppendGeoConstraintAsync(userPrompt, search, cancellationToken);
         AppendFeedback(userPrompt, search);
 
         userPrompt.AppendLine();
@@ -97,6 +105,8 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
         userPrompt.AppendLine($"Website: {candidate.Website}");
         userPrompt.AppendLine($"Emails: {string.Join(", ", candidate.Emails)}");
         userPrompt.AppendLine($"Phones: {string.Join(", ", candidate.Phones)}");
+        if (!string.IsNullOrWhiteSpace(candidate.Address))
+            userPrompt.AppendLine($"Street address found on the website: {candidate.Address}");
         userPrompt.AppendLine($"People hints: {string.Join(", ", candidate.PossiblePeopleNames)}");
         userPrompt.AppendLine($"Job title hints: {string.Join(", ", candidate.JobTitles)}");
         if (candidate.LinkedInContacts.Count > 0)
@@ -134,6 +144,11 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
             result.Company.Website ??= candidate.Website;
             if (string.IsNullOrWhiteSpace(result.Company.Name))
                 result.Company.Name = candidate.Name;
+
+            result.Company.Address = AddressExtractor.Normalize(result.Company.Address)
+                ?? candidate.Address;
+            if (string.IsNullOrWhiteSpace(result.Company.Location) && !string.IsNullOrWhiteSpace(result.Company.Address))
+                result.Company.Location = AddressExtractor.LocalityFromFormatted(result.Company.Address);
         }
 
         var companyLinkedIn = candidate.SocialLinks.GetValueOrDefault("linkedin");
@@ -185,6 +200,7 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
             userPrompt.AppendLine($"Industry: {search.Criteria.Industry}");
             userPrompt.AppendLine($"Location: {search.Criteria.Location}");
         }
+        await AppendGeoConstraintAsync(userPrompt, search, cancellationToken);
         AppendFeedback(userPrompt, search);
 
         userPrompt.AppendLine();
@@ -222,6 +238,17 @@ public sealed class OpenAiExtractionService : IOpenAiExtractionService
         {
             _logger.LogWarning(ex, "Failed to score {Count} contacts for search {SearchId}", batch.Count, search.Id);
         }
+    }
+
+    private async Task AppendGeoConstraintAsync(StringBuilder userPrompt, SearchRecord search, CancellationToken cancellationToken)
+    {
+        var geo = await _locations.ResolveAsync(SearchIntentResolver.RawLocation(search), cancellationToken);
+        var label = LocationConstraint.ConstraintLabel(geo);
+        if (string.IsNullOrWhiteSpace(label))
+            return;
+
+        userPrompt.AppendLine($"Resolved location: {geo!.QueryLabel}");
+        userPrompt.AppendLine($"Geographic constraint: {label}");
     }
 
     private static void AppendFeedback(StringBuilder userPrompt, SearchRecord search)

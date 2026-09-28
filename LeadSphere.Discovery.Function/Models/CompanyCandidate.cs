@@ -7,6 +7,7 @@ public sealed class CompanyCandidate
     public string? Domain { get; set; }
     public string? Industry { get; set; }
     public string? Location { get; set; }
+    public string? Address { get; set; }
     public string? Description { get; set; }
     public int? EmployeeCount { get; set; }
     public List<string> Emails { get; set; } = [];
@@ -46,6 +47,7 @@ public sealed class AiCompanyData
     public string? Domain { get; set; }
     public string? Industry { get; set; }
     public string? Location { get; set; }
+    public string? Address { get; set; }
     public string? Description { get; set; }
     public int? EmployeeCount { get; set; }
 }

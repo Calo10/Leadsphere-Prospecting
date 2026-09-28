@@ -19,6 +19,13 @@ public static class PhoneNormalizer
 
         var defaultCountry = InferDefaultCountryCode(locationHint);
 
+        if (digits.StartsWith('1') && digits.Length > 11)
+        {
+            var nanp = digits[..11];
+            if (LooksLikeNanpArea(nanp[1..4]))
+                digits = nanp;
+        }
+
         if (trimmed.StartsWith('+'))
             return $"+{digits}";
 
@@ -77,4 +84,7 @@ public static class PhoneNormalizer
 
         return "1";
     }
+
+    private static bool LooksLikeNanpArea(string area) =>
+        area.Length == 3 && area[0] is >= '2' and <= '9';
 }
