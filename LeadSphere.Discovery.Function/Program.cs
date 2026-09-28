@@ -25,6 +25,7 @@ var host = new HostBuilder()
         services.AddScoped<ISignalIntelligenceCollector, SignalIntelligenceCollector>();
         services.AddScoped<ISignalEvaluationService, SignalEvaluationService>();
 
+        services.AddScoped<ILocationResolutionService, LocationResolutionService>();
         services.AddScoped<IWebSearchService, WebSearchService>();
         services.AddScoped<IWebScraperService, WebScraperService>();
         services.AddScoped<ICompanyEnrichmentService, CompanyEnrichmentService>();

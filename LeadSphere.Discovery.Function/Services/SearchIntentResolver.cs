@@ -9,6 +9,7 @@ internal sealed class SearchIntent
     public string Profile { get; init; } = string.Empty;
     public string? Location { get; init; }
     public string? SerpApiLocation { get; init; }
+    public ResolvedSearchLocation? ResolvedLocation { get; init; }
     public string CountryCode { get; init; } = "us";
     public string Language { get; init; } = "es";
     public IReadOnlyList<string> IndustryKeywords { get; init; } = [];
@@ -49,19 +50,20 @@ internal static class SearchIntentResolver
         ["transporte"] = ["transportation", "freight carrier", "trucking company"]
     };
 
-    public static SearchIntent Resolve(SearchRecord search)
+    public static SearchIntent Resolve(SearchRecord search, ResolvedSearchLocation? geo = null)
     {
         var criteria = search.Criteria;
         var signals = search.FeedbackSignals;
         var profile = SearchFeedbackSignals.OriginalProfile(search.ProfileDescription);
-        var notes = signals?.Notes;
+        var notes = FirstNonEmpty(signals?.Notes, criteria?.Notes);
         var keywordSource = string.Join(' ', new[] { profile, notes }.Where(v => !string.IsNullOrWhiteSpace(v)));
         var industry = FirstNonEmpty(criteria?.Industry, search.Name) ?? "companies";
-        var location = FirstNonEmpty(
+        var rawLocation = FirstNonEmpty(
             criteria?.Location,
             ExtractLocationFromText(notes),
             ExtractLocationFromText(profile),
             ExtractLocationFromText(industry));
+        var location = FirstNonEmpty(geo?.QueryLabel, rawLocation);
 
         var industryKeywords = Tokenize(industry).ToList();
         var profileKeywords = ExtractProfileKeywords(keywordSource);
@@ -72,13 +74,26 @@ internal static class SearchIntentResolver
             Industry = industry,
             Profile = profile,
             Location = location,
-            SerpApiLocation = ResolveSerpApiLocation(location),
-            CountryCode = ResolveCountryCode(location, keywordSource),
+            SerpApiLocation = geo?.SerpApiLocation ?? ResolveSerpApiLocation(location),
+            ResolvedLocation = geo,
+            CountryCode = FirstNonEmpty(geo?.CountryCode, ResolveCountryCode(location, keywordSource)) ?? "us",
             Language = DetectLanguage(industry, keywordSource),
             IndustryKeywords = industryKeywords,
             ProfileKeywords = profileKeywords,
             BusinessTypeKeywords = businessTypeKeywords
         };
+    }
+
+    public static string? RawLocation(SearchRecord search)
+    {
+        var criteria = search.Criteria;
+        var signals = search.FeedbackSignals;
+        var profile = SearchFeedbackSignals.OriginalProfile(search.ProfileDescription);
+        return FirstNonEmpty(
+            criteria?.Location,
+            ExtractLocationFromText(signals?.Notes),
+            ExtractLocationFromText(profile),
+            ExtractLocationFromText(FirstNonEmpty(criteria?.Industry, search.Name)));
     }
 
     public static IReadOnlyList<string> EnglishIndustryVariants(string industry)

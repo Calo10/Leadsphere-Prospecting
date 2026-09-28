@@ -16,7 +16,8 @@ public sealed class WebScraperService : IWebScraperService
 {
     private static readonly string[] PagePaths =
     [
-        "", "/about", "/about-us", "/contact", "/contact-us",
+        "", "/about", "/about-us", "/contact", "/contact-us", "/contacto",
+        "/locations", "/location", "/find-us", "/our-offices",
         "/team", "/our-team", "/leadership", "/management", "/executive-team", "/people"
     ];
 
@@ -60,6 +61,7 @@ public sealed class WebScraperService : IWebScraperService
         var socialLinks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var websiteLinkedInContacts = new List<AiContactData>();
         var logoCandidates = new List<string>();
+        AddressExtractor.ExtractedAddress? address = null;
         string? homepageHtml = null;
 
         foreach (var path in PagePaths)
@@ -73,6 +75,8 @@ public sealed class WebScraperService : IWebScraperService
 
             if (path == string.Empty)
                 homepageHtml = html.Length > 50000 ? html[..50000] : html;
+
+            address ??= AddressExtractor.ExtractFromHtml(html);
 
             foreach (var (key, url) in SocialLinkExtractor.ExtractFromHtml(html))
             {
@@ -117,6 +121,8 @@ public sealed class WebScraperService : IWebScraperService
             .Select(g => g.First())
             .ToList();
         candidate.LogoCandidateUrls = logoCandidates.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        candidate.Address = address?.Formatted;
+        candidate.Location = address?.Locality ?? candidate.Location;
 
         return candidate;
     }

@@ -190,13 +190,20 @@ internal static class SearchResultRelevanceFilter
                 score += 0.22;
         }
 
-        if (!string.IsNullOrWhiteSpace(intent.Location))
+        var locationTokens = intent.ResolvedLocation?.MatchTokens.Count > 0
+            ? intent.ResolvedLocation.MatchTokens
+            : Tokenize(intent.Location ?? string.Empty);
+        foreach (var token in locationTokens)
         {
-            foreach (var token in Tokenize(intent.Location))
-            {
-                if (token.Length > 2 && text.Contains(token, StringComparison.Ordinal))
-                    score += 0.18;
-            }
+            if (token.Length > 2 && text.Contains(token, StringComparison.Ordinal))
+                score += 0.18;
+        }
+
+        if (intent.ResolvedLocation?.Granularity is LocationGranularity.City or LocationGranularity.Neighborhood
+            && locationTokens.Any(t => t.Length > 2 && text.Contains(t, StringComparison.Ordinal)
+                && intent.ResolvedLocation.ParentTokens.All(p => !string.Equals(p, t, StringComparison.OrdinalIgnoreCase))))
+        {
+            score += 0.25;
         }
 
         foreach (var keyword in intent.ProfileKeywords)
